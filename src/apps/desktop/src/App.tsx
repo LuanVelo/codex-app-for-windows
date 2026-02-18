@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { OAuthService } from "./modules/auth/oauth-service";
 import { SecureTokenStore } from "./modules/auth/token-store";
@@ -61,6 +61,8 @@ function App() {
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [authStatus, setAuthStatus] = useState("Ready");
+  const [authRequired, setAuthRequired] = useState(true);
+  const startupAttemptedRef = useRef(false);
 
   const [workspacePath, setWorkspacePath] = useState("");
 
@@ -94,11 +96,14 @@ function App() {
 
   async function onStartLogin() {
     try {
+      setAuthRequired(true);
       setAuthStatus("Abrindo browser e aguardando callback OAuth...");
       const next = await authService.beginLoginWithLoopback();
       setAuthSession(next);
+      setAuthRequired(false);
       setAuthStatus("Autenticado.");
     } catch (error) {
+      setAuthRequired(true);
       setAuthStatus(error instanceof Error ? error.message : "Falha ao iniciar login OAuth.");
     }
   }
@@ -107,8 +112,10 @@ function App() {
     try {
       const next = await authService.refreshSession();
       setAuthSession(next);
+      setAuthRequired(false);
       setAuthStatus("Sessão renovada.");
     } catch (error) {
+      setAuthRequired(true);
       setAuthStatus(error instanceof Error ? error.message : "Falha ao renovar sessão.");
     }
   }
@@ -116,8 +123,38 @@ function App() {
   async function onLogout() {
     await authService.logout();
     setAuthSession(null);
+    setAuthRequired(true);
     setAuthStatus("Logout concluído.");
   }
+
+  useEffect(() => {
+    if (startupAttemptedRef.current) {
+      return;
+    }
+    startupAttemptedRef.current = true;
+
+    async function startupAuth() {
+      if (!authService.isConfigured()) {
+        setAuthRequired(true);
+        setAuthStatus("Configure OAuth and click Connect to continue.");
+        return;
+      }
+
+      try {
+        setAuthStatus("Restoring session...");
+        const session = await authService.refreshSession();
+        setAuthSession(session);
+        setAuthRequired(false);
+        setAuthStatus("Sessão restaurada.");
+      } catch {
+        setAuthRequired(true);
+        setAuthStatus("Sign-in required. Opening browser...");
+        await onStartLogin();
+      }
+    }
+
+    void startupAuth();
+  }, [authService]);
 
   function onCreateSession() {
     const next = createSession();
@@ -214,6 +251,27 @@ function App() {
 
   return (
     <main className="app">
+      {authRequired && !authSession && (
+        <section className="auth-overlay">
+          <div className="auth-modal">
+            <h2>Connect your account</h2>
+            <p>
+              Sign in is required before using the app. The browser OAuth flow will open and connect your ChatGPT
+              account.
+            </p>
+            <div className="auth-actions">
+              <button onClick={onStartLogin} disabled={!authService.isConfigured()}>
+                Connect now
+              </button>
+              <button className="ghost" onClick={onRefreshLogin}>
+                Retry session restore
+              </button>
+            </div>
+            <p className="status-line">Auth: {authStatus}</p>
+          </div>
+        </section>
+      )}
+
       <header className="top-card">
         <div>
           <p className="eyebrow">Codex App for Windows</p>

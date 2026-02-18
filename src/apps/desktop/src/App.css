@@ -63,6 +63,33 @@ button.ghost {
   gap: 14px;
 }
 
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 18, 10, 0.6);
+  display: grid;
+  place-items: center;
+  z-index: 100;
+  padding: 20px;
+}
+
+.auth-modal {
+  width: min(560px, 100%);
+  background: #f7fbf4;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+}
+
+.auth-modal h2 {
+  margin: 0 0 8px;
+}
+
+.auth-modal p {
+  margin: 0 0 12px;
+}
+
 .top-card,
 .workspace-card,
 .panel {
