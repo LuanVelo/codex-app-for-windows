@@ -45,6 +45,15 @@ function loadOAuthConfig(): OAuthConfig {
   }
 }
 
+function missingOAuthConfigFields(config: OAuthConfig): string[] {
+  const missing: string[] = [];
+  if (!config.clientId.trim()) missing.push("Client ID");
+  if (!config.authorizeUrl.trim()) missing.push("Authorize URL");
+  if (!config.tokenUrl.trim()) missing.push("Token URL");
+  if (!config.redirectUri.trim()) missing.push("Redirect URI");
+  return missing;
+}
+
 function createMessage(role: ChatMessage["role"], content: string): ChatMessage {
   return {
     id: crypto.randomUUID(),
@@ -88,6 +97,7 @@ function App() {
   const [editableContent, setEditableContent] = useState("");
 
   const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sessions[0] ?? null;
+  const missingConfig = missingOAuthConfigFields(oauthConfig);
 
   function onSaveOAuthConfig() {
     localStorage.setItem(OAUTH_CONFIG_KEY, JSON.stringify(oauthConfig));
@@ -259,8 +269,66 @@ function App() {
               Sign in is required before using the app. The browser OAuth flow will open and connect your ChatGPT
               account.
             </p>
+            <div className="oauth-grid modal-oauth-grid">
+              <input
+                value={oauthConfig.clientId}
+                onChange={(event) =>
+                  setOauthConfig((prev) => ({
+                    ...prev,
+                    clientId: event.currentTarget.value,
+                  }))
+                }
+                placeholder="OAuth Client ID"
+              />
+              <input
+                value={oauthConfig.redirectUri}
+                onChange={(event) =>
+                  setOauthConfig((prev) => ({
+                    ...prev,
+                    redirectUri: event.currentTarget.value,
+                  }))
+                }
+                placeholder="Redirect URI (loopback)"
+              />
+              <input
+                value={oauthConfig.authorizeUrl}
+                onChange={(event) =>
+                  setOauthConfig((prev) => ({
+                    ...prev,
+                    authorizeUrl: event.currentTarget.value,
+                  }))
+                }
+                placeholder="Authorize URL"
+              />
+              <input
+                value={oauthConfig.tokenUrl}
+                onChange={(event) =>
+                  setOauthConfig((prev) => ({
+                    ...prev,
+                    tokenUrl: event.currentTarget.value,
+                  }))
+                }
+                placeholder="Token URL"
+              />
+              <input
+                value={oauthConfig.scope}
+                onChange={(event) =>
+                  setOauthConfig((prev) => ({
+                    ...prev,
+                    scope: event.currentTarget.value,
+                  }))
+                }
+                placeholder="Scopes"
+              />
+              <button className="ghost" onClick={onSaveOAuthConfig}>
+                Save OAuth config
+              </button>
+            </div>
+            {missingConfig.length > 0 && (
+              <p className="status-line">Missing required OAuth fields: {missingConfig.join(", ")}</p>
+            )}
             <div className="auth-actions">
-              <button onClick={onStartLogin} disabled={!authService.isConfigured()}>
+              <button onClick={onStartLogin} disabled={missingConfig.length > 0}>
                 Connect now
               </button>
               <button className="ghost" onClick={onRefreshLogin}>

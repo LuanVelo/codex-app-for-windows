@@ -153,6 +153,11 @@ textarea {
   gap: 8px;
 }
 
+.modal-oauth-grid {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
 .status-line {
   margin: 8px 0 0;
   color: #2f4f34;
