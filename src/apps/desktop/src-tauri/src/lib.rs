@@ -35,6 +35,12 @@ struct ThreadRecord {
     project_id: String,
     name: String,
     description: String,
+    #[serde(default)]
+    skill_id: Option<String>,
+    #[serde(default)]
+    worktree_path: Option<String>,
+    #[serde(default)]
+    worktree_branch: Option<String>,
     status: String,
     created_at: i64,
     updated_at: i64,
@@ -77,9 +83,23 @@ struct TaskLogRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SkillRecord {
+    id: String,
+    name: String,
+    system_prompt: String,
+    checklist: String,
+    suggested_commands: Vec<String>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 struct AppSettings {
     max_parallel_tasks: usize,
     default_shell: String,
+    default_workspace_root: String,
+    theme: String,
 }
 
 impl Default for AppSettings {
@@ -87,6 +107,8 @@ impl Default for AppSettings {
         Self {
             max_parallel_tasks: 2,
             default_shell: "powershell".to_string(),
+            default_workspace_root: "".to_string(),
+            theme: "light".to_string(),
         }
     }
 }
@@ -99,6 +121,7 @@ struct AppDb {
     messages: Vec<ThreadMessage>,
     tasks: Vec<TaskRecord>,
     task_logs: Vec<TaskLogRecord>,
+    skills: Vec<SkillRecord>,
     settings: AppSettings,
 }
 
@@ -108,6 +131,13 @@ struct GitStatusResult {
     is_repo: bool,
     branch: Option<String>,
     modified_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorktreeResult {
+    branch_name: String,
+    worktree_path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -567,6 +597,7 @@ fn create_thread(
     project_id: String,
     name: String,
     description: Option<String>,
+    skill_id: Option<String>,
 ) -> Result<ThreadRecord, String> {
     let now = now_ms();
 
@@ -589,6 +620,9 @@ fn create_thread(
             name.trim().to_string()
         },
         description: description.unwrap_or_default(),
+        skill_id,
+        worktree_path: None,
+        worktree_branch: None,
         status: "idle".to_string(),
         created_at: now,
         updated_at: now,
@@ -816,6 +850,171 @@ fn set_max_parallel_tasks(app: AppHandle, state: State<AppState>, value: usize) 
     save_db_to_disk(&app, &state)?;
     schedule_tasks(app, state.inner().clone());
     Ok(())
+}
+
+#[tauri::command]
+fn get_app_settings(state: State<AppState>) -> Result<AppSettings, String> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| "Database lock poisoned".to_string())?;
+    Ok(db.settings.clone())
+}
+
+#[tauri::command]
+fn update_app_settings(app: AppHandle, state: State<AppState>, settings: AppSettings) -> Result<(), String> {
+    if settings.max_parallel_tasks == 0 {
+        return Err("max_parallel_tasks must be >= 1".to_string());
+    }
+
+    if let Ok(mut db) = state.db.lock() {
+        db.settings = settings;
+    }
+
+    save_db_to_disk(&app, &state)?;
+    schedule_tasks(app, state.inner().clone());
+    Ok(())
+}
+
+#[tauri::command]
+fn list_skills(state: State<AppState>) -> Result<Vec<SkillRecord>, String> {
+    let mut skills = state
+        .db
+        .lock()
+        .map_err(|_| "Database lock poisoned".to_string())?
+        .skills
+        .clone();
+    skills.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(skills)
+}
+
+#[tauri::command]
+fn create_skill(
+    app: AppHandle,
+    state: State<AppState>,
+    name: String,
+    system_prompt: String,
+    checklist: Option<String>,
+    suggested_commands: Option<Vec<String>>,
+) -> Result<SkillRecord, String> {
+    let now = now_ms();
+    let skill = SkillRecord {
+        id: next_id("skill"),
+        name: if name.trim().is_empty() {
+            "New skill".to_string()
+        } else {
+            name.trim().to_string()
+        },
+        system_prompt,
+        checklist: checklist.unwrap_or_default(),
+        suggested_commands: suggested_commands.unwrap_or_default(),
+        created_at: now,
+        updated_at: now,
+    };
+
+    if let Ok(mut db) = state.db.lock() {
+        db.skills.push(skill.clone());
+    }
+    save_db_to_disk(&app, &state)?;
+    Ok(skill)
+}
+
+#[tauri::command]
+fn update_skill(
+    app: AppHandle,
+    state: State<AppState>,
+    skill_id: String,
+    name: String,
+    system_prompt: String,
+    checklist: Option<String>,
+    suggested_commands: Option<Vec<String>>,
+) -> Result<SkillRecord, String> {
+    let mut updated: Option<SkillRecord> = None;
+    if let Ok(mut db) = state.db.lock() {
+        if let Some(skill) = db.skills.iter_mut().find(|s| s.id == skill_id) {
+            skill.name = if name.trim().is_empty() {
+                skill.name.clone()
+            } else {
+                name.trim().to_string()
+            };
+            skill.system_prompt = system_prompt;
+            skill.checklist = checklist.unwrap_or_default();
+            skill.suggested_commands = suggested_commands.unwrap_or_default();
+            skill.updated_at = now_ms();
+            updated = Some(skill.clone());
+        }
+    }
+
+    let skill = updated.ok_or_else(|| "Skill not found".to_string())?;
+    save_db_to_disk(&app, &state)?;
+    Ok(skill)
+}
+
+#[tauri::command]
+fn delete_skill(app: AppHandle, state: State<AppState>, skill_id: String) -> Result<(), String> {
+    if let Ok(mut db) = state.db.lock() {
+        db.skills.retain(|s| s.id != skill_id);
+    }
+    save_db_to_disk(&app, &state)
+}
+
+#[tauri::command]
+fn create_worktree(
+    project_path: String,
+    branch_name: String,
+    worktree_path: String,
+) -> Result<WorktreeResult, String> {
+    let canonical_project = canonical_workspace(&project_path)?;
+    let project = canonical_project.to_string_lossy().to_string();
+
+    if branch_name.trim().is_empty() {
+        return Err("branch_name is required".to_string());
+    }
+    if worktree_path.trim().is_empty() {
+        return Err("worktree_path is required".to_string());
+    }
+
+    let output = Command::new("git")
+        .args([
+            "-C",
+            project.as_str(),
+            "worktree",
+            "add",
+            "-b",
+            branch_name.trim(),
+            worktree_path.trim(),
+        ])
+        .output()
+        .map_err(|err| format!("Failed to execute git worktree add: {err}"))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    Ok(WorktreeResult {
+        branch_name: branch_name.trim().to_string(),
+        worktree_path: worktree_path.trim().to_string(),
+    })
+}
+
+#[tauri::command]
+fn attach_thread_worktree(
+    app: AppHandle,
+    state: State<AppState>,
+    thread_id: String,
+    worktree_path: String,
+    branch_name: String,
+) -> Result<(), String> {
+    if let Ok(mut db) = state.db.lock() {
+        if let Some(thread) = db.threads.iter_mut().find(|t| t.id == thread_id) {
+            thread.worktree_path = Some(worktree_path);
+            thread.worktree_branch = Some(branch_name);
+            thread.updated_at = now_ms();
+        } else {
+            return Err("Thread not found".to_string());
+        }
+    }
+    save_db_to_disk(&app, &state)
 }
 
 #[tauri::command]
@@ -1139,6 +1338,14 @@ pub fn run() {
             list_tasks,
             list_task_logs,
             set_max_parallel_tasks,
+            get_app_settings,
+            update_app_settings,
+            list_skills,
+            create_skill,
+            update_skill,
+            delete_skill,
+            create_worktree,
+            attach_thread_worktree,
             git_status,
             git_diff,
             run_terminal_command,

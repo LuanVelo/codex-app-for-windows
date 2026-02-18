@@ -3,7 +3,9 @@ import { FolderOpen, MessageSquarePlus, Settings } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
+import { Textarea } from "./components/ui/textarea";
 import { useAppStore } from "./state/app-store";
+import type { AppSettingsRecord, SkillRecord } from "./features/mvp/types";
 import type { AuthSession, OAuthConfig } from "./modules/auth/types";
 import { OAuthService } from "./modules/auth/oauth-service";
 import {
@@ -86,6 +88,10 @@ function App() {
     selectedTaskId,
     taskLogs,
     git,
+    gitPatch,
+    selectedDiffFile,
+    skills,
+    settings,
     statusText,
     init,
     createProject,
@@ -97,12 +103,21 @@ function App() {
     cancelTask,
     selectTask,
     refreshGit,
+    loadGitDiff,
+    loadSkills,
+    createSkill,
+    deleteSkill,
+    loadSettings,
+    saveSettings,
+    createThreadWorktree,
   } = useAppStore();
 
   const [projectPathInput, setProjectPathInput] = useState("");
   const [threadNameInput, setThreadNameInput] = useState("");
   const [chatInput, setChatInput] = useState("");
   const [taskCommandInput, setTaskCommandInput] = useState("");
+  const [worktreeBranchInput, setWorktreeBranchInput] = useState("");
+  const [worktreePathInput, setWorktreePathInput] = useState("");
 
   const [authSettings, setAuthSettings] = useState<AuthSettings>(() => loadAuthSettings());
   const [authDraft, setAuthDraft] = useState<AuthSettings>(authSettings);
@@ -110,6 +125,14 @@ function App() {
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [authStatus, setAuthStatus] = useState("Not connected");
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+
+  const [settingsDraft, setSettingsDraft] = useState<AppSettingsRecord>(settings);
+  const [skillDraft, setSkillDraft] = useState<Pick<SkillRecord, "name" | "systemPrompt" | "checklist">>({
+    name: "",
+    systemPrompt: "",
+    checklist: "",
+  });
+  const [skillCommandsText, setSkillCommandsText] = useState("");
 
   const authService = useMemo(
     () => new OAuthService(authSettings.oauth, new SecureTokenStore()),
@@ -119,6 +142,17 @@ function App() {
   useEffect(() => {
     void init();
   }, [init]);
+
+  useEffect(() => {
+    setSettingsDraft(settings);
+  }, [settings]);
+
+  useEffect(() => {
+    async function bootstrapPhase2() {
+      await Promise.all([loadSkills(), loadSettings()]);
+    }
+    void bootstrapPhase2();
+  }, [loadSettings, loadSkills]);
 
   useEffect(() => {
     async function bootstrapAuth() {
@@ -238,11 +272,34 @@ function App() {
     }
   }
 
+  async function onCreateWorktree() {
+    if (!worktreeBranchInput.trim() || !worktreePathInput.trim()) return;
+    await createThreadWorktree(worktreeBranchInput.trim(), worktreePathInput.trim());
+    setWorktreeBranchInput("");
+    setWorktreePathInput("");
+  }
+
+  async function onCreateSkill() {
+    if (!skillDraft.name.trim()) return;
+    const suggested = skillCommandsText
+      .split("\n")
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+    await createSkill(skillDraft.name.trim(), skillDraft.systemPrompt, skillDraft.checklist, suggested);
+    setSkillDraft({ name: "", systemPrompt: "", checklist: "" });
+    setSkillCommandsText("");
+  }
+
+  async function onSaveAppSettings() {
+    await saveSettings(settingsDraft);
+  }
+
   const missingDraft = missingOAuthFields(authDraft.oauth);
 
   return (
     <div className="h-full p-3">
-      <div className="mx-auto grid h-full max-w-[1600px] grid-cols-[300px_1fr] gap-3">
+      <div className="mx-auto grid h-full max-w-[1680px] grid-cols-[320px_1fr] gap-3">
         <aside className="flex h-full flex-col rounded-xl bg-zinc-100 p-3">
           <div className="mb-3">
             <p className="text-sm font-semibold">Projects</p>
@@ -304,6 +361,9 @@ function App() {
               >
                 <p className="truncate">{thread.name}</p>
                 <p className="text-[11px] text-zinc-500">{thread.status}</p>
+                {thread.worktreeBranch && (
+                  <p className="text-[10px] text-emerald-700">worktree: {thread.worktreeBranch}</p>
+                )}
               </button>
             ))}
           </div>
@@ -322,120 +382,219 @@ function App() {
                 Settings
               </Button>
             </DialogTrigger>
-            <DialogContent>
-              <h2 className="text-lg font-semibold">Settings</h2>
-              <p className="text-xs text-zinc-500">{authStatus}</p>
+            <DialogContent className="max-w-3xl">
+              <h2 className="text-lg font-semibold">Settings & Skills</h2>
+              <p className="text-xs text-zinc-500">{statusText}</p>
 
-              <label className="text-sm font-medium">Auth Method</label>
-              <select
-                className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
-                value={authDraft.method}
-                onChange={(e) =>
-                  setAuthDraft((prev) => ({ ...prev, method: e.currentTarget.value as AuthMethod }))
-                }
-              >
-                <option value="oauth">OAuth</option>
-                <option value="api_key">OpenAI API Key</option>
-              </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-3 rounded-md border border-zinc-200 p-3">
+                  <h3 className="text-sm font-semibold">Auth</h3>
+                  <p className="text-xs text-zinc-500">{authStatus}</p>
 
-              {authDraft.method === "api_key" ? (
-                <div className="space-y-2">
-                  <Input
-                    placeholder="OpenAI API key"
-                    value={apiKeyDraft}
-                    onChange={(e) => setApiKeyDraft(e.currentTarget.value)}
-                  />
-                  <Input
-                    placeholder="Model"
-                    value={authDraft.apiModel}
+                  <label className="text-sm font-medium">Auth Method</label>
+                  <select
+                    className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
+                    value={authDraft.method}
                     onChange={(e) =>
-                      setAuthDraft((prev) => ({ ...prev, apiModel: e.currentTarget.value }))
+                      setAuthDraft((prev) => ({ ...prev, method: e.currentTarget.value as AuthMethod }))
                     }
-                  />
-                  <Input
-                    placeholder="API base URL"
-                    value={authDraft.apiBaseUrl}
-                    onChange={(e) =>
-                      setAuthDraft((prev) => ({ ...prev, apiBaseUrl: e.currentTarget.value }))
-                    }
-                  />
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Input
-                    placeholder="OAuth Client ID"
-                    value={authDraft.oauth.clientId}
-                    onChange={(e) =>
-                      setAuthDraft((prev) => ({
-                        ...prev,
-                        oauth: { ...prev.oauth, clientId: e.currentTarget.value },
-                      }))
-                    }
-                  />
-                  <Input
-                    placeholder="Authorize URL"
-                    value={authDraft.oauth.authorizeUrl}
-                    onChange={(e) =>
-                      setAuthDraft((prev) => ({
-                        ...prev,
-                        oauth: { ...prev.oauth, authorizeUrl: e.currentTarget.value },
-                      }))
-                    }
-                  />
-                  <Input
-                    placeholder="Token URL"
-                    value={authDraft.oauth.tokenUrl}
-                    onChange={(e) =>
-                      setAuthDraft((prev) => ({
-                        ...prev,
-                        oauth: { ...prev.oauth, tokenUrl: e.currentTarget.value },
-                      }))
-                    }
-                  />
-                  <Input
-                    placeholder="Redirect URI"
-                    value={authDraft.oauth.redirectUri}
-                    onChange={(e) =>
-                      setAuthDraft((prev) => ({
-                        ...prev,
-                        oauth: { ...prev.oauth, redirectUri: e.currentTarget.value },
-                      }))
-                    }
-                  />
-                  <Input
-                    placeholder="Scopes"
-                    value={authDraft.oauth.scope}
-                    onChange={(e) =>
-                      setAuthDraft((prev) => ({
-                        ...prev,
-                        oauth: { ...prev.oauth, scope: e.currentTarget.value },
-                      }))
-                    }
-                  />
-                  {missingDraft.length > 0 && (
-                    <p className="text-xs text-red-600">Missing: {missingDraft.join(", ")}</p>
+                  >
+                    <option value="oauth">OAuth</option>
+                    <option value="api_key">OpenAI API Key</option>
+                  </select>
+
+                  {authDraft.method === "api_key" ? (
+                    <div className="space-y-2">
+                      <Input
+                        placeholder="OpenAI API key"
+                        value={apiKeyDraft}
+                        onChange={(e) => setApiKeyDraft(e.currentTarget.value)}
+                      />
+                      <Input
+                        placeholder="Model"
+                        value={authDraft.apiModel}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({ ...prev, apiModel: e.currentTarget.value }))
+                        }
+                      />
+                      <Input
+                        placeholder="API base URL"
+                        value={authDraft.apiBaseUrl}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({ ...prev, apiBaseUrl: e.currentTarget.value }))
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Input
+                        placeholder="OAuth Client ID"
+                        value={authDraft.oauth.clientId}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({
+                            ...prev,
+                            oauth: { ...prev.oauth, clientId: e.currentTarget.value },
+                          }))
+                        }
+                      />
+                      <Input
+                        placeholder="Authorize URL"
+                        value={authDraft.oauth.authorizeUrl}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({
+                            ...prev,
+                            oauth: { ...prev.oauth, authorizeUrl: e.currentTarget.value },
+                          }))
+                        }
+                      />
+                      <Input
+                        placeholder="Token URL"
+                        value={authDraft.oauth.tokenUrl}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({
+                            ...prev,
+                            oauth: { ...prev.oauth, tokenUrl: e.currentTarget.value },
+                          }))
+                        }
+                      />
+                      <Input
+                        placeholder="Redirect URI"
+                        value={authDraft.oauth.redirectUri}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({
+                            ...prev,
+                            oauth: { ...prev.oauth, redirectUri: e.currentTarget.value },
+                          }))
+                        }
+                      />
+                      <Input
+                        placeholder="Scopes"
+                        value={authDraft.oauth.scope}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({
+                            ...prev,
+                            oauth: { ...prev.oauth, scope: e.currentTarget.value },
+                          }))
+                        }
+                      />
+                      {missingDraft.length > 0 && (
+                        <p className="text-xs text-red-600">Missing: {missingDraft.join(", ")}</p>
+                      )}
+                    </div>
                   )}
+
+                  <Button onClick={onSaveAuthSettings}>Save auth</Button>
                 </div>
-              )}
+
+                <div className="space-y-3 rounded-md border border-zinc-200 p-3">
+                  <h3 className="text-sm font-semibold">App settings</h3>
+                  <Input
+                    placeholder="Default shell"
+                    value={settingsDraft.defaultShell}
+                    onChange={(e) =>
+                      setSettingsDraft((prev) => ({ ...prev, defaultShell: e.currentTarget.value }))
+                    }
+                  />
+                  <Input
+                    type="number"
+                    placeholder="Max parallel tasks"
+                    value={String(settingsDraft.maxParallelTasks)}
+                    onChange={(e) =>
+                      setSettingsDraft((prev) => ({
+                        ...prev,
+                        maxParallelTasks: Number(e.currentTarget.value || "1"),
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Default workspace root"
+                    value={settingsDraft.defaultWorkspaceRoot}
+                    onChange={(e) =>
+                      setSettingsDraft((prev) => ({ ...prev, defaultWorkspaceRoot: e.currentTarget.value }))
+                    }
+                  />
+                  <select
+                    className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
+                    value={settingsDraft.theme}
+                    onChange={(e) =>
+                      setSettingsDraft((prev) => ({ ...prev, theme: e.currentTarget.value }))
+                    }
+                  >
+                    <option value="light">light</option>
+                    <option value="dark">dark</option>
+                  </select>
+                  <Button variant="outline" onClick={onSaveAppSettings}>
+                    Save app settings
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-md border border-zinc-200 p-3">
+                <h3 className="mb-2 text-sm font-semibold">Skills</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Input
+                      placeholder="Skill name"
+                      value={skillDraft.name}
+                      onChange={(e) =>
+                        setSkillDraft((prev) => ({ ...prev, name: e.currentTarget.value }))
+                      }
+                    />
+                    <Textarea
+                      placeholder="System prompt"
+                      value={skillDraft.systemPrompt}
+                      onChange={(e) =>
+                        setSkillDraft((prev) => ({ ...prev, systemPrompt: e.currentTarget.value }))
+                      }
+                      className="min-h-[90px]"
+                    />
+                    <Textarea
+                      placeholder="Checklist"
+                      value={skillDraft.checklist}
+                      onChange={(e) =>
+                        setSkillDraft((prev) => ({ ...prev, checklist: e.currentTarget.value }))
+                      }
+                      className="min-h-[70px]"
+                    />
+                    <Textarea
+                      placeholder="Suggested commands (one per line)"
+                      value={skillCommandsText}
+                      onChange={(e) => setSkillCommandsText(e.currentTarget.value)}
+                      className="min-h-[70px]"
+                    />
+                    <Button onClick={onCreateSkill}>Create skill</Button>
+                  </div>
+                  <div className="max-h-[320px] space-y-2 overflow-auto rounded-md bg-zinc-50 p-2">
+                    {skills.map((skill) => (
+                      <div key={skill.id} className="rounded border border-zinc-200 bg-white p-2">
+                        <p className="font-medium">{skill.name}</p>
+                        <p className="line-clamp-2 text-xs text-zinc-500">{skill.systemPrompt}</p>
+                        <div className="mt-2 flex justify-end">
+                          <Button size="sm" variant="ghost" onClick={() => deleteSkill(skill.id)}>
+                            delete
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
 
               <div className="flex justify-end gap-2">
                 <DialogClose asChild>
                   <Button variant="ghost">Close</Button>
-                </DialogClose>
-                <DialogClose asChild>
-                  <Button onClick={onSaveAuthSettings}>Save</Button>
                 </DialogClose>
               </div>
             </DialogContent>
           </Dialog>
         </aside>
 
-        <section className="grid h-full grid-rows-[1fr_320px] overflow-hidden rounded-xl bg-white">
+        <section className="grid h-full grid-rows-[1fr_380px] overflow-hidden rounded-xl bg-white">
           <div className="flex flex-col border-b border-zinc-200">
             <header className="border-b border-zinc-100 px-5 py-3">
               <p className="text-lg font-semibold">{activeThread?.name ?? "No thread selected"}</p>
               <p className="text-xs text-zinc-500">{statusText}</p>
-              <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
                 <span>{activeProject?.path ?? "No project"}</span>
                 {git?.isRepo ? (
                   <>
@@ -476,8 +635,9 @@ function App() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 p-3">
+          <div className="grid grid-cols-3 gap-3 p-3">
             <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-2">
+              <p className="text-xs font-medium text-zinc-500">Task executor</p>
               <div className="grid grid-cols-[1fr_auto] gap-2">
                 <Input
                   value={taskCommandInput}
@@ -486,7 +646,6 @@ function App() {
                 />
                 <Button onClick={onRunTask}>Run</Button>
               </div>
-
               <div className="h-full overflow-auto rounded-md bg-zinc-50 p-2">
                 {tasks.map((task) => (
                   <div
@@ -515,8 +674,8 @@ function App() {
             </div>
 
             <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-2">
-              <p className="text-xs font-medium text-zinc-500">Task logs (streaming)</p>
-              <div className="h-full overflow-auto rounded-md bg-zinc-50 p-2">
+              <p className="text-xs font-medium text-zinc-500">Logs + Worktree</p>
+              <div className="h-32 overflow-auto rounded-md bg-zinc-50 p-2">
                 {taskLogs.map((line) => (
                   <pre
                     key={line.id}
@@ -527,6 +686,44 @@ function App() {
                     {line.stream === "stderr" ? "[err]" : "[out]"} {line.line}
                   </pre>
                 ))}
+              </div>
+              <Input
+                value={worktreeBranchInput}
+                onChange={(e) => setWorktreeBranchInput(e.currentTarget.value)}
+                placeholder="worktree branch"
+              />
+              <Input
+                value={worktreePathInput}
+                onChange={(e) => setWorktreePathInput(e.currentTarget.value)}
+                placeholder="C:/workspace/worktrees/thread-1"
+              />
+              <Button variant="outline" onClick={onCreateWorktree}>
+                Create + Attach worktree
+              </Button>
+            </div>
+
+            <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-2">
+              <p className="text-xs font-medium text-zinc-500">Review (Git Diff)</p>
+              <div className="h-24 overflow-auto rounded-md bg-zinc-50 p-2 text-xs">
+                {git?.modifiedFiles.map((file) => (
+                  <button
+                    key={file}
+                    className={`block w-full rounded px-1 py-0.5 text-left hover:bg-zinc-200 ${
+                      selectedDiffFile === file ? "bg-zinc-200" : ""
+                    }`}
+                    onClick={() => loadGitDiff(file)}
+                  >
+                    {file}
+                  </button>
+                ))}
+              </div>
+              <div className="flex justify-end">
+                <Button variant="ghost" size="sm" onClick={() => loadGitDiff()}>
+                  full patch
+                </Button>
+              </div>
+              <div className="h-full overflow-auto rounded-md bg-zinc-50 p-2">
+                <pre className="whitespace-pre-wrap text-xs text-zinc-800">{gitPatch || "No diff loaded"}</pre>
               </div>
             </div>
           </div>

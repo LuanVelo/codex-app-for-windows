@@ -2,21 +2,32 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import {
   addThreadMessage,
+  attachThreadWorktree,
   cancelTask,
+  createSkill,
   createProject,
   createThread,
+  createWorktree,
+  deleteSkill,
+  getAppSettings,
   gitStatus,
+  gitDiff,
   listProjects,
+  listSkills,
   listTaskLogs,
   listTasks,
   listThreadMessages,
   listThreads,
   runTask,
+  updateAppSettings,
+  updateSkill,
   touchProject,
 } from "../features/mvp/api";
 import type {
+  AppSettingsRecord,
   GitStatusResult,
   ProjectRecord,
+  SkillRecord,
   TaskLogEvent,
   TaskLogRecord,
   TaskRecord,
@@ -35,6 +46,10 @@ interface AppStore {
   selectedTaskId: string;
   taskLogs: TaskLogRecord[];
   git: GitStatusResult | null;
+  gitPatch: string;
+  selectedDiffFile: string;
+  skills: SkillRecord[];
+  settings: AppSettingsRecord;
   loading: boolean;
   statusText: string;
   listenersReady: boolean;
@@ -49,6 +64,14 @@ interface AppStore {
   cancelTask: (taskId: string) => Promise<void>;
   selectTask: (taskId: string) => Promise<void>;
   refreshGit: () => Promise<void>;
+  loadGitDiff: (file?: string) => Promise<void>;
+  loadSkills: () => Promise<void>;
+  createSkill: (name: string, systemPrompt: string, checklist?: string, suggestedCommands?: string[]) => Promise<void>;
+  updateSkill: (skillId: string, name: string, systemPrompt: string, checklist?: string, suggestedCommands?: string[]) => Promise<void>;
+  deleteSkill: (skillId: string) => Promise<void>;
+  loadSettings: () => Promise<void>;
+  saveSettings: (settings: AppSettingsRecord) => Promise<void>;
+  createThreadWorktree: (branchName: string, worktreePath: string) => Promise<void>;
 }
 
 let listeners: UnlistenFn[] = [];
@@ -70,6 +93,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
   selectedTaskId: "",
   taskLogs: [],
   git: null,
+  gitPatch: "",
+  selectedDiffFile: "",
+  skills: [],
+  settings: {
+    maxParallelTasks: 2,
+    defaultShell: "powershell",
+    defaultWorkspaceRoot: "",
+    theme: "light",
+  },
   loading: false,
   statusText: "Ready",
   listenersReady: false,
@@ -84,6 +116,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       loading: false,
       statusText: "Ready",
     });
+
+    await Promise.all([get().loadSettings(), get().loadSkills()]);
 
     const activeProjectId = get().activeProjectId;
     if (activeProjectId) {
@@ -277,6 +311,62 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     const status = await gitStatus(project.path);
-    set({ git: status });
+    set({ git: status, selectedDiffFile: status.modifiedFiles[0] ?? "" });
+  },
+
+  loadGitDiff: async (file?: string) => {
+    const project = get().projects.find((p) => p.id === get().activeProjectId);
+    if (!project) {
+      set({ gitPatch: "" });
+      return;
+    }
+    const patch = await gitDiff(project.path, file);
+    set({ gitPatch: patch, selectedDiffFile: file ?? "" });
+  },
+
+  loadSkills: async () => {
+    const skills = await listSkills();
+    set({ skills });
+  },
+
+  createSkill: async (name: string, systemPrompt: string, checklist?: string, suggestedCommands?: string[]) => {
+    await createSkill(name, systemPrompt, checklist, suggestedCommands);
+    const skills = await listSkills();
+    set({ skills, statusText: `Skill ${name} created` });
+  },
+
+  updateSkill: async (skillId: string, name: string, systemPrompt: string, checklist?: string, suggestedCommands?: string[]) => {
+    await updateSkill(skillId, name, systemPrompt, checklist, suggestedCommands);
+    const skills = await listSkills();
+    set({ skills, statusText: `Skill ${name} updated` });
+  },
+
+  deleteSkill: async (skillId: string) => {
+    await deleteSkill(skillId);
+    const skills = await listSkills();
+    set({ skills, statusText: "Skill removed" });
+  },
+
+  loadSettings: async () => {
+    const settings = await getAppSettings();
+    set({ settings });
+  },
+
+  saveSettings: async (settings: AppSettingsRecord) => {
+    await updateAppSettings(settings);
+    set({ settings, statusText: "App settings saved" });
+  },
+
+  createThreadWorktree: async (branchName: string, worktreePath: string) => {
+    const project = get().projects.find((p) => p.id === get().activeProjectId);
+    const threadId = get().activeThreadId;
+    if (!project || !threadId) {
+      return;
+    }
+
+    const result = await createWorktree(project.path, branchName, worktreePath);
+    await attachThreadWorktree(threadId, result.worktreePath, result.branchName);
+    const threads = await listThreads(project.id);
+    set({ threads, statusText: `Worktree attached to thread (${result.branchName})` });
   },
 }));

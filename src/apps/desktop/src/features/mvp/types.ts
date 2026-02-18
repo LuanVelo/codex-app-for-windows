@@ -11,6 +11,9 @@ export interface ThreadRecord {
   projectId: string;
   name: string;
   description: string;
+  skillId?: string;
+  worktreePath?: string;
+  worktreeBranch?: string;
   status: string;
   createdAt: number;
   updatedAt: number;
@@ -63,4 +66,26 @@ export interface TaskLogEvent {
   threadId: string;
   stream: string;
   line: string;
+}
+
+export interface SkillRecord {
+  id: string;
+  name: string;
+  systemPrompt: string;
+  checklist: string;
+  suggestedCommands: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AppSettingsRecord {
+  maxParallelTasks: number;
+  defaultShell: string;
+  defaultWorkspaceRoot: string;
+  theme: string;
+}
+
+export interface WorktreeResult {
+  branchName: string;
+  worktreePath: string;
 }

@@ -1,11 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AppSettingsRecord,
   GitStatusResult,
   ProjectRecord,
+  SkillRecord,
   TaskLogRecord,
   TaskRecord,
   ThreadMessage,
   ThreadRecord,
+  WorktreeResult,
 } from "./types";
 
 export function createProject(path: string, name?: string) {
@@ -20,8 +23,8 @@ export function touchProject(projectId: string) {
   return invoke<void>("touch_project", { projectId });
 }
 
-export function createThread(projectId: string, name: string, description?: string) {
-  return invoke<ThreadRecord>("create_thread", { projectId, name, description });
+export function createThread(projectId: string, name: string, description?: string, skillId?: string) {
+  return invoke<ThreadRecord>("create_thread", { projectId, name, description, skillId });
 }
 
 export function listThreads(projectId: string) {
@@ -54,6 +57,55 @@ export function listTaskLogs(taskId: string) {
 
 export function setMaxParallelTasks(value: number) {
   return invoke<void>("set_max_parallel_tasks", { value });
+}
+
+export function getAppSettings() {
+  return invoke<AppSettingsRecord>("get_app_settings");
+}
+
+export function updateAppSettings(settings: AppSettingsRecord) {
+  return invoke<void>("update_app_settings", { settings });
+}
+
+export function listSkills() {
+  return invoke<SkillRecord[]>("list_skills");
+}
+
+export function createSkill(
+  name: string,
+  systemPrompt: string,
+  checklist?: string,
+  suggestedCommands?: string[],
+) {
+  return invoke<SkillRecord>("create_skill", { name, systemPrompt, checklist, suggestedCommands });
+}
+
+export function updateSkill(
+  skillId: string,
+  name: string,
+  systemPrompt: string,
+  checklist?: string,
+  suggestedCommands?: string[],
+) {
+  return invoke<SkillRecord>("update_skill", {
+    skillId,
+    name,
+    systemPrompt,
+    checklist,
+    suggestedCommands,
+  });
+}
+
+export function deleteSkill(skillId: string) {
+  return invoke<void>("delete_skill", { skillId });
+}
+
+export function createWorktree(projectPath: string, branchName: string, worktreePath: string) {
+  return invoke<WorktreeResult>("create_worktree", { projectPath, branchName, worktreePath });
+}
+
+export function attachThreadWorktree(threadId: string, worktreePath: string, branchName: string) {
+  return invoke<void>("attach_thread_worktree", { threadId, worktreePath, branchName });
 }
 
 export function gitStatus(path: string) {
