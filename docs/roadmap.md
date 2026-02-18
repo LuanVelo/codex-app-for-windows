@@ -4,13 +4,15 @@
 - Repositório + CI
 - Scaffold Tauri + React
 - Padrões de arquitetura + lint + testes base
+- Pipeline de build para artefato portátil (`.zip`)
 
 ## Fase 1 - MVP funcional (3-5 semanas)
 - Login/configuração de token
 - Tela principal de sessão
 - Terminal integrado
 - Persistência local de histórico
-- Build instalável para Windows
+- Build portátil para Windows (sem instalação)
+- Assinatura de binário e validações de segurança
 
 ## Fase 2 - Produtividade (3-4 semanas)
 - Automações recorrentes

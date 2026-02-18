@@ -10,7 +10,7 @@ Construir um aplicativo desktop para Windows com foco em:
 - gerenciamento de projetos/workspaces;
 - automações e extensibilidade por skills.
 
-## Stack recomendada (MVP)
+## Stack definida (MVP)
 - **Desktop shell:** Tauri v2 (Rust)
 - **UI:** React + TypeScript + Vite
 - **State management:** Zustand
@@ -19,6 +19,11 @@ Construir um aplicativo desktop para Windows com foco em:
 - **Persistência local:** SQLite (via plugin Tauri)
 - **Observabilidade:** OpenTelemetry + Sentry
 - **CI/CD:** GitHub Actions
+
+## Estratégia de distribuição Windows
+- **Padrão:** build portátil (`.exe` + arquivos em `.zip`, sem instalador)
+- **Opcional:** instalador (`NSIS/MSI`) para canal corporativo
+- **Política:** manter compatibilidade com execução sem privilégio administrativo
 
 ## Estrutura do repositório
 ```text
@@ -29,6 +34,7 @@ Construir um aplicativo desktop para Windows com foco em:
 │   └── adr/
 │       ├── 0001-architecture-style.md
 │       └── 0002-desktop-framework.md
+│       └── 0003-windows-portable-first.md
 ├── src/
 │   ├── apps/
 │   │   └── desktop/
@@ -51,4 +57,4 @@ Construir um aplicativo desktop para Windows com foco em:
 1. Inicializar app Tauri + React.
 2. Implementar autenticação e gestão de sessão.
 3. Criar módulo de terminal e execução de comandos.
-4. Publicar build Windows com auto-update.
+4. Publicar build Windows portátil (zip) como artefato padrão.

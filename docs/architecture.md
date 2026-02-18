@@ -5,6 +5,7 @@
 - **Offline-first parcial:** app deve funcionar para tarefas locais mesmo sem rede.
 - **Segurança por padrão:** segredo em cofre do sistema + criptografia de dados sensíveis.
 - **Observabilidade:** logs estruturados, tracing e métricas desde o início.
+- **Portável por padrão:** executar no Windows sem necessidade de instalação.
 
 ## 2. Visão em camadas
 
@@ -42,7 +43,7 @@
 6. **Automation Scheduler (local)**
 7. **Settings (API keys, model, runtime)**
 8. **Telemetry & Error Reporting**
-9. **Auto-update + Release channel**
+9. **Release Packaging (Portable + Installer opcional)**
 10. **Security (credential vault, permissions)**
 
 ## 4. Integrações externas
@@ -65,3 +66,14 @@
 - **Fase 1 (MVP):** sessão, terminal, workspace, autenticação
 - **Fase 2:** automações + integração GitHub avançada
 - **Fase 3:** plugins/skills marketplace + colaboração
+
+## 8. Distribuição portátil no Windows
+- Artefato principal: `codex-app-for-windows-portable.zip`
+- Conteúdo: executável + runtime/recursos necessários para execução local
+- Requisito funcional: rodar sem installer e sem elevação de privilégio
+- Persistência:
+  - padrão em `%APPDATA%/CodexApp` para dados de usuário
+  - modo alternativo "portable data" na pasta do executável (configurável)
+- Atualização:
+  - canal portátil começa com atualização manual (download de nova versão)
+  - auto-update pode ser habilitado depois para canal instalado
