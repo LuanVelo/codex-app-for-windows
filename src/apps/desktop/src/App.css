@@ -119,6 +119,13 @@ textarea {
   flex-wrap: wrap;
 }
 
+.oauth-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .status-line {
   margin: 8px 0 0;
   color: #2f4f34;
@@ -298,6 +305,10 @@ textarea {
 
 @media (max-width: 1000px) {
   .two-column {
+    grid-template-columns: 1fr;
+  }
+
+  .oauth-grid {
     grid-template-columns: 1fr;
   }
 }

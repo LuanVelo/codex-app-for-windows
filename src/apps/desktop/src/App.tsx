@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import "./App.css";
 import { OAuthService } from "./modules/auth/oauth-service";
 import { SecureTokenStore } from "./modules/auth/token-store";
-import type { AuthSession } from "./modules/auth/types";
+import type { AuthSession, OAuthConfig } from "./modules/auth/types";
 import type { AgentSession, ChatMessage, CommandResult, WorkspaceEntry } from "./modules/common/types";
 import { requestAssistantReply } from "./modules/session/codex-client";
 import { appendMessage, createSession, loadSessions } from "./modules/session/session-store";
@@ -15,6 +15,35 @@ import {
 } from "./modules/workspace/workspace-service";
 
 type TabKey = "sessions" | "terminal" | "workspace";
+const OAUTH_CONFIG_KEY = "codex.oauth.config.v1";
+
+function loadOAuthConfig(): OAuthConfig {
+  const fromEnv: OAuthConfig = {
+    clientId: import.meta.env.VITE_OAUTH_CLIENT_ID ?? "",
+    authorizeUrl: import.meta.env.VITE_OAUTH_AUTHORIZE_URL ?? "",
+    tokenUrl: import.meta.env.VITE_OAUTH_TOKEN_URL ?? "",
+    redirectUri: import.meta.env.VITE_OAUTH_REDIRECT_URI ?? "http://127.0.0.1:4815/callback",
+    scope: import.meta.env.VITE_OAUTH_SCOPE ?? "openid profile offline_access",
+  };
+
+  const raw = localStorage.getItem(OAUTH_CONFIG_KEY);
+  if (!raw) {
+    return fromEnv;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<OAuthConfig>;
+    return {
+      clientId: parsed.clientId ?? fromEnv.clientId,
+      authorizeUrl: parsed.authorizeUrl ?? fromEnv.authorizeUrl,
+      tokenUrl: parsed.tokenUrl ?? fromEnv.tokenUrl,
+      redirectUri: parsed.redirectUri ?? fromEnv.redirectUri,
+      scope: parsed.scope ?? fromEnv.scope,
+    };
+  } catch {
+    return fromEnv;
+  }
+}
 
 function createMessage(role: ChatMessage["role"], content: string): ChatMessage {
   return {
@@ -26,7 +55,8 @@ function createMessage(role: ChatMessage["role"], content: string): ChatMessage 
 }
 
 function App() {
-  const authService = useMemo(() => OAuthService.fromEnv(new SecureTokenStore()), []);
+  const [oauthConfig, setOauthConfig] = useState<OAuthConfig>(() => loadOAuthConfig());
+  const authService = useMemo(() => new OAuthService(oauthConfig, new SecureTokenStore()), [oauthConfig]);
   const [tab, setTab] = useState<TabKey>("sessions");
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
@@ -56,6 +86,11 @@ function App() {
   const [editableContent, setEditableContent] = useState("");
 
   const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sessions[0] ?? null;
+
+  function onSaveOAuthConfig() {
+    localStorage.setItem(OAUTH_CONFIG_KEY, JSON.stringify(oauthConfig));
+    setAuthStatus("Config OAuth salva localmente.");
+  }
 
   async function onStartLogin() {
     try {
@@ -186,10 +221,10 @@ function App() {
         </div>
 
         <div className="auth-actions">
-          <button onClick={onStartLogin} disabled={!authService.isConfigured()}>
+          <button onClick={onStartLogin}>
             Entrar OAuth
           </button>
-          <button onClick={onRefreshLogin} disabled={!authSession}>
+          <button onClick={onRefreshLogin}>
             Refresh
           </button>
           <button className="ghost" onClick={onLogout}>
@@ -198,6 +233,62 @@ function App() {
         </div>
 
         <p className="status-line">Auth: {authStatus}</p>
+
+        <div className="oauth-grid">
+          <input
+            value={oauthConfig.clientId}
+            onChange={(event) =>
+              setOauthConfig((prev) => ({
+                ...prev,
+                clientId: event.currentTarget.value,
+              }))
+            }
+            placeholder="OAuth Client ID"
+          />
+          <input
+            value={oauthConfig.redirectUri}
+            onChange={(event) =>
+              setOauthConfig((prev) => ({
+                ...prev,
+                redirectUri: event.currentTarget.value,
+              }))
+            }
+            placeholder="Redirect URI (loopback)"
+          />
+          <input
+            value={oauthConfig.authorizeUrl}
+            onChange={(event) =>
+              setOauthConfig((prev) => ({
+                ...prev,
+                authorizeUrl: event.currentTarget.value,
+              }))
+            }
+            placeholder="Authorize URL"
+          />
+          <input
+            value={oauthConfig.tokenUrl}
+            onChange={(event) =>
+              setOauthConfig((prev) => ({
+                ...prev,
+                tokenUrl: event.currentTarget.value,
+              }))
+            }
+            placeholder="Token URL"
+          />
+          <input
+            value={oauthConfig.scope}
+            onChange={(event) =>
+              setOauthConfig((prev) => ({
+                ...prev,
+                scope: event.currentTarget.value,
+              }))
+            }
+            placeholder="Scopes"
+          />
+          <button className="ghost" onClick={onSaveOAuthConfig}>
+            Salvar config OAuth
+          </button>
+        </div>
       </header>
 
       <section className="workspace-card">
