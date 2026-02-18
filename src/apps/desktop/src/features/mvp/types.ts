@@ -14,6 +14,7 @@ export interface ThreadRecord {
   skillId?: string;
   worktreePath?: string;
   worktreeBranch?: string;
+  permissionMode: "safe" | "normal" | "danger-confirm" | string;
   status: string;
   createdAt: number;
   updatedAt: number;

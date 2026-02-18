@@ -41,9 +41,15 @@ struct ThreadRecord {
     worktree_path: Option<String>,
     #[serde(default)]
     worktree_branch: Option<String>,
+    #[serde(default = "default_permission_mode")]
+    permission_mode: String,
     status: String,
     created_at: i64,
     updated_at: i64,
+}
+
+fn default_permission_mode() -> String {
+    "normal".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,6 +304,29 @@ fn update_thread_status(state: &AppState, thread_id: &str, status: &str) {
             thread.status = status.to_string();
             thread.updated_at = now_ms();
         }
+    }
+}
+
+fn is_destructive_command(command: &str) -> bool {
+    let value = command.to_lowercase();
+    let dangerous_patterns = [
+        "git reset --hard",
+        "git clean -fd",
+        "git clean -xdf",
+        "rm -rf",
+        "del /s /q",
+        "rmdir /s /q",
+        "format ",
+        "takeown ",
+    ];
+
+    dangerous_patterns.iter().any(|pattern| value.contains(pattern))
+}
+
+fn validate_permission_mode(mode: &str) -> Result<(), String> {
+    match mode {
+        "safe" | "normal" | "danger-confirm" => Ok(()),
+        _ => Err("Invalid permission mode. Use safe, normal, or danger-confirm".to_string()),
     }
 }
 
@@ -623,6 +652,7 @@ fn create_thread(
         skill_id,
         worktree_path: None,
         worktree_branch: None,
+        permission_mode: default_permission_mode(),
         status: "idle".to_string(),
         created_at: now,
         updated_at: now,
@@ -701,6 +731,7 @@ fn run_task(
     command: String,
     cwd: Option<String>,
     shell: Option<String>,
+    confirm_destructive: Option<bool>,
 ) -> Result<TaskRecord, String> {
     let resolved_cwd = cwd.unwrap_or_default();
     if resolved_cwd.trim().is_empty() {
@@ -728,6 +759,40 @@ fn run_task(
                 .unwrap_or_else(|_| "powershell".to_string())
         }
     };
+
+    let thread_permission_mode = {
+        let db = state
+            .db
+            .lock()
+            .map_err(|_| "Database lock poisoned".to_string())?;
+        let thread = db
+            .threads
+            .iter()
+            .find(|t| t.id == thread_id)
+            .ok_or_else(|| "Thread not found".to_string())?;
+        thread.permission_mode.clone()
+    };
+
+    let destructive = is_destructive_command(&command);
+    let confirmed = confirm_destructive.unwrap_or(false);
+    if destructive {
+        match thread_permission_mode.as_str() {
+            "safe" => {
+                return Err(
+                    "Command blocked by safe mode. Change session permission to run destructive commands."
+                        .to_string(),
+                )
+            }
+            "normal" | "danger-confirm" => {
+                if !confirmed {
+                    return Err(
+                        "Destructive command requires explicit confirmation for this session.".to_string(),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
 
     let task = TaskRecord {
         id: next_id("task"),
@@ -765,6 +830,29 @@ fn run_task(
     schedule_tasks(app, state.inner().clone());
 
     Ok(task)
+}
+
+#[tauri::command]
+fn set_thread_permission(
+    app: AppHandle,
+    state: State<AppState>,
+    thread_id: String,
+    permission_mode: String,
+) -> Result<ThreadRecord, String> {
+    validate_permission_mode(permission_mode.as_str())?;
+
+    let mut updated: Option<ThreadRecord> = None;
+    if let Ok(mut db) = state.db.lock() {
+        if let Some(thread) = db.threads.iter_mut().find(|t| t.id == thread_id) {
+            thread.permission_mode = permission_mode;
+            thread.updated_at = now_ms();
+            updated = Some(thread.clone());
+        }
+    }
+
+    let thread = updated.ok_or_else(|| "Thread not found".to_string())?;
+    save_db_to_disk(&app, &state)?;
+    Ok(thread)
 }
 
 #[tauri::command]
@@ -1334,6 +1422,7 @@ pub fn run() {
             add_thread_message,
             list_thread_messages,
             run_task,
+            set_thread_permission,
             cancel_task,
             list_tasks,
             list_task_logs,

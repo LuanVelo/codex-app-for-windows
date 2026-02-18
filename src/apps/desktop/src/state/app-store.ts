@@ -19,6 +19,7 @@ import {
   listThreadMessages,
   listThreads,
   runTask,
+  setThreadPermission,
   updateAppSettings,
   updateSkill,
   touchProject,
@@ -72,6 +73,7 @@ interface AppStore {
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettingsRecord) => Promise<void>;
   createThreadWorktree: (branchName: string, worktreePath: string) => Promise<void>;
+  setThreadPermissionMode: (permissionMode: "safe" | "normal" | "danger-confirm") => Promise<void>;
 }
 
 let listeners: UnlistenFn[] = [];
@@ -285,7 +287,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    const task = await runTask(threadId, command.trim(), project.path, "powershell");
+    const task = await runTask(threadId, command.trim(), project.path, "powershell", false);
     const tasks = await listTasks(threadId);
     set({ tasks, selectedTaskId: task.id, taskLogs: [], statusText: `Task queued: ${task.id}` });
   },
@@ -368,5 +370,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     await attachThreadWorktree(threadId, result.worktreePath, result.branchName);
     const threads = await listThreads(project.id);
     set({ threads, statusText: `Worktree attached to thread (${result.branchName})` });
+  },
+
+  setThreadPermissionMode: async (permissionMode: "safe" | "normal" | "danger-confirm") => {
+    const threadId = get().activeThreadId;
+    const projectId = get().activeProjectId;
+    if (!threadId || !projectId) {
+      return;
+    }
+
+    await setThreadPermission(threadId, permissionMode);
+    const threads = await listThreads(projectId);
+    set({ threads, statusText: `Thread permission set to ${permissionMode}` });
   },
 }));

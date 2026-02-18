@@ -87,9 +87,6 @@ function App() {
     tasks,
     selectedTaskId,
     taskLogs,
-    git,
-    gitPatch,
-    selectedDiffFile,
     skills,
     settings,
     statusText,
@@ -102,14 +99,13 @@ function App() {
     runTask,
     cancelTask,
     selectTask,
-    refreshGit,
-    loadGitDiff,
     loadSkills,
     createSkill,
     deleteSkill,
     loadSettings,
     saveSettings,
     createThreadWorktree,
+    setThreadPermissionMode,
   } = useAppStore();
 
   const [projectPathInput, setProjectPathInput] = useState("");
@@ -181,7 +177,6 @@ function App() {
     void bootstrapAuth();
   }, [authService, authSettings.method]);
 
-  const activeProject = projects.find((p) => p.id === activeProjectId);
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
   async function onAddProject() {
@@ -594,21 +589,19 @@ function App() {
             <header className="border-b border-zinc-100 px-5 py-3">
               <p className="text-lg font-semibold">{activeThread?.name ?? "No thread selected"}</p>
               <p className="text-xs text-zinc-500">{statusText}</p>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                <span>{activeProject?.path ?? "No project"}</span>
-                {git?.isRepo ? (
-                  <>
-                    <span>•</span>
-                    <span>branch: {git.branch ?? "unknown"}</span>
-                    <span>•</span>
-                    <span>{git.modifiedFiles.length} modified</span>
-                    <button onClick={() => refreshGit()} className="rounded px-2 py-0.5 hover:bg-zinc-100">
-                      refresh git
-                    </button>
-                  </>
-                ) : (
-                  <span>• not a git repository</span>
-                )}
+              <div className="mt-2 flex items-center gap-2 text-xs">
+                <span className="text-zinc-500">Session permission</span>
+                <select
+                  className="h-7 rounded-md border border-zinc-300 bg-white px-2 text-xs"
+                  value={activeThread?.permissionMode ?? "normal"}
+                  onChange={(e) =>
+                    setThreadPermissionMode(e.currentTarget.value as "safe" | "normal" | "danger-confirm")
+                  }
+                >
+                  <option value="safe">safe</option>
+                  <option value="normal">normal</option>
+                  <option value="danger-confirm">danger-confirm</option>
+                </select>
               </div>
             </header>
 
@@ -635,7 +628,7 @@ function App() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3 p-3">
+          <div className="grid grid-cols-2 gap-3 p-3">
             <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-2">
               <p className="text-xs font-medium text-zinc-500">Task executor</p>
               <div className="grid grid-cols-[1fr_auto] gap-2">
@@ -702,30 +695,6 @@ function App() {
               </Button>
             </div>
 
-            <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-2">
-              <p className="text-xs font-medium text-zinc-500">Review (Git Diff)</p>
-              <div className="h-24 overflow-auto rounded-md bg-zinc-50 p-2 text-xs">
-                {git?.modifiedFiles.map((file) => (
-                  <button
-                    key={file}
-                    className={`block w-full rounded px-1 py-0.5 text-left hover:bg-zinc-200 ${
-                      selectedDiffFile === file ? "bg-zinc-200" : ""
-                    }`}
-                    onClick={() => loadGitDiff(file)}
-                  >
-                    {file}
-                  </button>
-                ))}
-              </div>
-              <div className="flex justify-end">
-                <Button variant="ghost" size="sm" onClick={() => loadGitDiff()}>
-                  full patch
-                </Button>
-              </div>
-              <div className="h-full overflow-auto rounded-md bg-zinc-50 p-2">
-                <pre className="whitespace-pre-wrap text-xs text-zinc-800">{gitPatch || "No diff loaded"}</pre>
-              </div>
-            </div>
           </div>
         </section>
       </div>

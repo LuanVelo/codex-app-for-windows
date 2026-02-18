@@ -39,8 +39,14 @@ export function listThreadMessages(threadId: string) {
   return invoke<ThreadMessage[]>("list_thread_messages", { threadId });
 }
 
-export function runTask(threadId: string, command: string, cwd: string, shell?: string) {
-  return invoke<TaskRecord>("run_task", { threadId, command, cwd, shell });
+export function runTask(
+  threadId: string,
+  command: string,
+  cwd: string,
+  shell?: string,
+  confirmDestructive?: boolean,
+) {
+  return invoke<TaskRecord>("run_task", { threadId, command, cwd, shell, confirmDestructive });
 }
 
 export function cancelTask(taskId: string) {
@@ -114,4 +120,11 @@ export function gitStatus(path: string) {
 
 export function gitDiff(path: string, file?: string) {
   return invoke<string>("git_diff", { path, file });
+}
+
+export function setThreadPermission(
+  threadId: string,
+  permissionMode: "safe" | "normal" | "danger-confirm",
+) {
+  return invoke<ThreadRecord>("set_thread_permission", { threadId, permissionMode });
 }
