@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, MessageSquarePlus, MoreHorizontal, Settings } from "lucide-react";
+import { FolderOpen, MessageSquarePlus, Settings } from "lucide-react";
+import { Button } from "./components/ui/button";
+import { Dialog, DialogClose, DialogContent, DialogTrigger } from "./components/ui/dialog";
+import { Input } from "./components/ui/input";
+import { useAppStore } from "./state/app-store";
+import type { AuthSession, OAuthConfig } from "./modules/auth/types";
 import { OAuthService } from "./modules/auth/oauth-service";
 import {
   SecureTokenStore,
@@ -7,26 +12,8 @@ import {
   loadApiKey,
   saveApiKey,
 } from "./modules/auth/token-store";
-import type { AuthSession, OAuthConfig } from "./modules/auth/types";
-import type {
-  AgentSession,
-  ChatMessage,
-  CommandResult,
-  WorkspaceEntry,
-} from "./modules/common/types";
 import { requestAssistantReply } from "./modules/session/codex-client";
-import { appendMessage, createSession, loadSessions } from "./modules/session/session-store";
-import { runWorkspaceCommand } from "./modules/terminal/terminal-service";
-import { buildLineDiff } from "./modules/workspace/diff";
-import {
-  listWorkspaceEntries,
-  readWorkspaceFile,
-  writeWorkspaceFile,
-} from "./modules/workspace/workspace-service";
-import { Button } from "./components/ui/button";
-import { Dialog, DialogClose, DialogContent, DialogTrigger } from "./components/ui/dialog";
-import { Input } from "./components/ui/input";
-import { Textarea } from "./components/ui/textarea";
+import { addThreadMessage } from "./features/mvp/api";
 
 type AuthMethod = "oauth" | "api_key";
 
@@ -38,7 +25,6 @@ interface AuthSettings {
 }
 
 const AUTH_SETTINGS_KEY = "codex.auth.settings.v1";
-const WORKSPACES_KEY = "codex.workspaces.v1";
 
 function defaultOAuthConfig(): OAuthConfig {
   return {
@@ -80,10 +66,6 @@ function loadAuthSettings(): AuthSettings {
   }
 }
 
-function createMessage(role: ChatMessage["role"], content: string): ChatMessage {
-  return { id: crypto.randomUUID(), role, content, createdAt: Date.now() };
-}
-
 function missingOAuthFields(config: OAuthConfig): string[] {
   const missing: string[] = [];
   if (!config.clientId.trim()) missing.push("Client ID");
@@ -93,22 +75,35 @@ function missingOAuthFields(config: OAuthConfig): string[] {
   return missing;
 }
 
-function loadWorkspaces(): string[] {
-  const raw = localStorage.getItem(WORKSPACES_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as string[];
-    return parsed.filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-function saveWorkspaces(items: string[]) {
-  localStorage.setItem(WORKSPACES_KEY, JSON.stringify(items));
-}
-
 function App() {
+  const {
+    projects,
+    activeProjectId,
+    threads,
+    activeThreadId,
+    messages,
+    tasks,
+    selectedTaskId,
+    taskLogs,
+    git,
+    statusText,
+    init,
+    createProject,
+    selectProject,
+    createThread,
+    selectThread,
+    sendUserMessage,
+    runTask,
+    cancelTask,
+    selectTask,
+    refreshGit,
+  } = useAppStore();
+
+  const [projectPathInput, setProjectPathInput] = useState("");
+  const [threadNameInput, setThreadNameInput] = useState("");
+  const [chatInput, setChatInput] = useState("");
+  const [taskCommandInput, setTaskCommandInput] = useState("");
+
   const [authSettings, setAuthSettings] = useState<AuthSettings>(() => loadAuthSettings());
   const [authDraft, setAuthDraft] = useState<AuthSettings>(authSettings);
   const [apiKey, setApiKey] = useState("");
@@ -116,38 +111,17 @@ function App() {
   const [authStatus, setAuthStatus] = useState("Not connected");
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
 
-  const [workspaceInput, setWorkspaceInput] = useState("");
-  const [workspaces, setWorkspaces] = useState<string[]>(() => loadWorkspaces());
-  const [activeWorkspace, setActiveWorkspace] = useState<string>(() => loadWorkspaces()[0] ?? "");
-  const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
-
-  const [sessions, setSessions] = useState<AgentSession[]>(() => {
-    const loaded = loadSessions();
-    return loaded.length ? loaded : [createSession("New chat")];
-  });
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => loadSessions()[0]?.id ?? "");
-
-  const [prompt, setPrompt] = useState("");
-  const [sessionStatus, setSessionStatus] = useState("Idle");
-
-  const [command, setCommand] = useState("");
-  const [terminalStatus, setTerminalStatus] = useState("Idle");
-  const [commandHistory, setCommandHistory] = useState<Array<CommandResult & { command: string }>>([]);
-
-  const [selectedFile, setSelectedFile] = useState("");
-  const [originalContent, setOriginalContent] = useState("");
-  const [editableContent, setEditableContent] = useState("");
-
   const authService = useMemo(
     () => new OAuthService(authSettings.oauth, new SecureTokenStore()),
     [authSettings.oauth],
   );
 
-  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? sessions[0] ?? null;
-  const diffLines = buildLineDiff(originalContent, editableContent);
+  useEffect(() => {
+    void init();
+  }, [init]);
 
   useEffect(() => {
-    async function bootstrap() {
+    async function bootstrapAuth() {
       const key = await loadApiKey();
       setApiKey(key ?? "");
 
@@ -170,50 +144,67 @@ function App() {
       }
     }
 
-    void bootstrap();
+    void bootstrapAuth();
   }, [authService, authSettings.method]);
 
-  useEffect(() => {
-    if (!activeWorkspace) {
-      setEntries([]);
-      return;
-    }
+  const activeProject = projects.find((p) => p.id === activeProjectId);
+  const activeThread = threads.find((t) => t.id === activeThreadId);
 
-    async function loadRoot() {
-      try {
-        const data = await listWorkspaceEntries(activeWorkspace, "");
-        setEntries(data);
-      } catch {
-        setEntries([]);
-      }
-    }
-
-    void loadRoot();
-  }, [activeWorkspace]);
-
-  function onCreateChat() {
-    const next = createSession();
-    setSessions(loadSessions());
-    setActiveSessionId(next.id);
+  async function onAddProject() {
+    if (!projectPathInput.trim()) return;
+    await createProject(projectPathInput.trim());
+    setProjectPathInput("");
   }
 
-  function onAddWorkspace() {
-    const value = workspaceInput.trim();
-    if (!value) return;
-    if (workspaces.includes(value)) {
-      setWorkspaceInput("");
-      setActiveWorkspace(value);
-      return;
-    }
-
-    const updated = [value, ...workspaces];
-    setWorkspaces(updated);
-    saveWorkspaces(updated);
-    setWorkspaceInput("");
-    setActiveWorkspace(value);
+  async function onCreateThread() {
+    const name = threadNameInput.trim() || "New thread";
+    await createThread(name);
+    setThreadNameInput("");
   }
 
-  async function onSaveSettings() {
+  async function onSendChat() {
+    const content = chatInput.trim();
+    if (!content || !activeThreadId) return;
+
+    setChatInput("");
+    await sendUserMessage(content);
+
+    try {
+      const assistant = await requestAssistantReply(
+        messages.map((m) => ({
+          id: m.id,
+          role: m.role as "user" | "assistant" | "system",
+          content: m.content,
+          createdAt: m.createdAt,
+        })),
+        content,
+        {
+          method: authSettings.method,
+          accessToken: authSession?.accessToken,
+          apiKey,
+          model: authSettings.apiModel,
+          apiBaseUrl: authSettings.apiBaseUrl,
+        },
+      );
+      await addThreadMessage(activeThreadId, "assistant", assistant);
+      await selectThread(activeThreadId);
+    } catch (error) {
+      await addThreadMessage(
+        activeThreadId,
+        "system",
+        error instanceof Error ? error.message : "Assistant request failed",
+      );
+      await selectThread(activeThreadId);
+    }
+  }
+
+  async function onRunTask() {
+    if (!taskCommandInput.trim()) return;
+    await runTask(taskCommandInput.trim());
+    setTaskCommandInput("");
+  }
+
+  async function onSaveAuthSettings() {
     localStorage.setItem(AUTH_SETTINGS_KEY, JSON.stringify(authDraft));
     setAuthSettings(authDraft);
 
@@ -247,136 +238,74 @@ function App() {
     }
   }
 
-  async function onSendPrompt() {
-    if (!activeSession || !prompt.trim()) return;
-
-    const userText = prompt.trim();
-    setPrompt("");
-    const userMessage = createMessage("user", userText);
-    const afterUser = appendMessage(activeSession.id, userMessage);
-    setSessions(afterUser);
-    setSessionStatus("Generating reply...");
-
-    try {
-      const history = afterUser.find((s) => s.id === activeSession.id)?.messages ?? [];
-      const reply = await requestAssistantReply(history, userText, {
-        method: authSettings.method,
-        accessToken: authSession?.accessToken,
-        apiKey,
-        model: authSettings.apiModel,
-        apiBaseUrl: authSettings.apiBaseUrl,
-      });
-      setSessions(appendMessage(activeSession.id, createMessage("assistant", reply)));
-      setSessionStatus("Reply received");
-    } catch (error) {
-      setSessions(
-        appendMessage(
-          activeSession.id,
-          createMessage("system", error instanceof Error ? error.message : "Request failed"),
-        ),
-      );
-      setSessionStatus("Request failed");
-    }
-  }
-
-  async function onRunCommand() {
-    try {
-      setTerminalStatus("Running command...");
-      const result = await runWorkspaceCommand(activeWorkspace, command);
-      setCommandHistory((prev) => [{ ...result, command }, ...prev].slice(0, 20));
-      setTerminalStatus(`Done (exit ${result.exitCode})`);
-    } catch (error) {
-      setTerminalStatus(error instanceof Error ? error.message : "Command failed");
-    }
-  }
-
-  async function onOpenFile(path: string) {
-    try {
-      const content = await readWorkspaceFile(activeWorkspace, path);
-      setSelectedFile(path);
-      setOriginalContent(content);
-      setEditableContent(content);
-    } catch {
-      setSelectedFile("");
-    }
-  }
-
-  async function onSaveFile() {
-    if (!selectedFile) return;
-    await writeWorkspaceFile(activeWorkspace, selectedFile, editableContent);
-    setOriginalContent(editableContent);
-  }
-
   const missingDraft = missingOAuthFields(authDraft.oauth);
 
   return (
     <div className="h-full p-3">
-      <div className="mx-auto grid h-full max-w-[1500px] grid-cols-[290px_1fr] gap-3">
+      <div className="mx-auto grid h-full max-w-[1600px] grid-cols-[300px_1fr] gap-3">
         <aside className="flex h-full flex-col rounded-xl bg-zinc-100 p-3">
-          <div className="mb-2 flex items-center justify-between px-2">
-            <h1 className="text-lg font-semibold">codex windows</h1>
-            <button className="rounded-md p-1 text-zinc-500 hover:bg-zinc-200">
-              <MoreHorizontal className="h-4 w-4" />
-            </button>
+          <div className="mb-3">
+            <p className="text-sm font-semibold">Projects</p>
+            <div className="mt-2 flex gap-2">
+              <Input
+                value={projectPathInput}
+                onChange={(e) => setProjectPathInput(e.currentTarget.value)}
+                placeholder="C:/workspace/repo"
+                className="h-8 bg-white"
+              />
+              <Button size="sm" variant="outline" onClick={onAddProject}>
+                Add
+              </Button>
+            </div>
+            <div className="mt-2 space-y-1">
+              {projects.map((project) => (
+                <button
+                  key={project.id}
+                  onClick={() => selectProject(project.id)}
+                  className={`w-full rounded-md px-2 py-2 text-left text-sm ${
+                    project.id === activeProjectId
+                      ? "bg-zinc-900 text-white"
+                      : "text-zinc-700 hover:bg-zinc-200"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <FolderOpen className="h-4 w-4" />
+                    <span className="truncate">{project.name}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
 
-          <Button variant="ghost" className="justify-start px-2" onClick={onCreateChat}>
-            <MessageSquarePlus className="h-4 w-4" />
-            New chat
-          </Button>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-semibold">Threads</p>
+            <Button size="sm" variant="ghost" onClick={onCreateThread}>
+              <MessageSquarePlus className="h-4 w-4" />
+            </Button>
+          </div>
 
-          <div className="mt-4 flex-1 space-y-4 overflow-auto">
-            <section>
-              <p className="px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Threads</p>
-              <div className="mt-1 space-y-1">
-                {sessions.map((session) => (
-                  <button
-                    key={session.id}
-                    onClick={() => setActiveSessionId(session.id)}
-                    className={`w-full rounded-md px-2 py-2 text-left text-sm ${
-                      session.id === activeSession?.id
-                        ? "bg-zinc-200 text-zinc-900"
-                        : "text-zinc-700 hover:bg-zinc-200"
-                    }`}
-                  >
-                    <p className="truncate">{session.title}</p>
-                  </button>
-                ))}
-              </div>
-            </section>
+          <Input
+            value={threadNameInput}
+            onChange={(e) => setThreadNameInput(e.currentTarget.value)}
+            placeholder="Thread name"
+            className="mb-2 h-8 bg-white"
+          />
 
-            <section>
-              <p className="px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Workspaces</p>
-              <div className="mt-2 flex gap-2">
-                <Input
-                  value={workspaceInput}
-                  onChange={(e) => setWorkspaceInput(e.currentTarget.value)}
-                  placeholder="C:/repo"
-                  className="h-8 bg-white"
-                />
-                <Button size="sm" variant="outline" onClick={onAddWorkspace}>
-                  Add
-                </Button>
-              </div>
-              <div className="mt-2 space-y-1">
-                {workspaces.map((workspace) => (
-                  <button
-                    key={workspace}
-                    onClick={() => setActiveWorkspace(workspace)}
-                    className={`w-full rounded-md px-2 py-2 text-left text-sm ${
-                      workspace === activeWorkspace
-                        ? "bg-zinc-900 text-white"
-                        : "text-zinc-700 hover:bg-zinc-200"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <FolderOpen className="h-4 w-4" />
-                      <span className="truncate">{workspace}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </section>
+          <div className="flex-1 space-y-1 overflow-auto">
+            {threads.map((thread) => (
+              <button
+                key={thread.id}
+                onClick={() => selectThread(thread.id)}
+                className={`w-full rounded-md px-2 py-2 text-left text-sm ${
+                  thread.id === activeThreadId
+                    ? "bg-zinc-200 text-zinc-900"
+                    : "text-zinc-700 hover:bg-zinc-200"
+                }`}
+              >
+                <p className="truncate">{thread.name}</p>
+                <p className="text-[11px] text-zinc-500">{thread.status}</p>
+              </button>
+            ))}
           </div>
 
           <Dialog>
@@ -394,10 +323,10 @@ function App() {
               </Button>
             </DialogTrigger>
             <DialogContent>
-              <h2 className="text-lg font-semibold">Authentication settings</h2>
+              <h2 className="text-lg font-semibold">Settings</h2>
               <p className="text-xs text-zinc-500">{authStatus}</p>
 
-              <label className="text-sm font-medium">Method</label>
+              <label className="text-sm font-medium">Auth Method</label>
               <select
                 className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
                 value={authDraft.method}
@@ -494,23 +423,39 @@ function App() {
                   <Button variant="ghost">Close</Button>
                 </DialogClose>
                 <DialogClose asChild>
-                  <Button onClick={onSaveSettings}>Save</Button>
+                  <Button onClick={onSaveAuthSettings}>Save</Button>
                 </DialogClose>
               </div>
             </DialogContent>
           </Dialog>
         </aside>
 
-        <section className="flex h-full flex-col rounded-xl bg-white">
-          <header className="border-b border-zinc-200 px-6 py-4">
-            <p className="text-xl font-semibold">{activeSession?.title ?? "New chat"}</p>
-            <p className="text-sm text-zinc-500">{sessionStatus}</p>
-          </header>
+        <section className="grid h-full grid-rows-[1fr_320px] overflow-hidden rounded-xl bg-white">
+          <div className="flex flex-col border-b border-zinc-200">
+            <header className="border-b border-zinc-100 px-5 py-3">
+              <p className="text-lg font-semibold">{activeThread?.name ?? "No thread selected"}</p>
+              <p className="text-xs text-zinc-500">{statusText}</p>
+              <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
+                <span>{activeProject?.path ?? "No project"}</span>
+                {git?.isRepo ? (
+                  <>
+                    <span>•</span>
+                    <span>branch: {git.branch ?? "unknown"}</span>
+                    <span>•</span>
+                    <span>{git.modifiedFiles.length} modified</span>
+                    <button onClick={() => refreshGit()} className="rounded px-2 py-0.5 hover:bg-zinc-100">
+                      refresh git
+                    </button>
+                  </>
+                ) : (
+                  <span>• not a git repository</span>
+                )}
+              </div>
+            </header>
 
-          <div className="grid flex-1 grid-rows-[1fr_320px]">
-            <div className="overflow-auto px-6 py-4">
+            <div className="flex-1 overflow-auto px-5 py-3">
               <div className="mx-auto max-w-4xl space-y-3">
-                {(activeSession?.messages ?? []).map((message) => (
+                {messages.map((message) => (
                   <article key={message.id} className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
                     <p className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">{message.role}</p>
                     <pre className="whitespace-pre-wrap text-sm leading-6">{message.content}</pre>
@@ -519,87 +464,69 @@ function App() {
               </div>
             </div>
 
-            <div className="border-t border-zinc-200 px-6 py-3">
-              <div className="grid h-full grid-cols-2 gap-3">
-                <div className="flex flex-col gap-2">
-                  <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <Input
-                      value={prompt}
-                      onChange={(e) => setPrompt(e.currentTarget.value)}
-                      placeholder="Ask something..."
-                    />
-                    <Button onClick={onSendPrompt}>Send</Button>
-                  </div>
+            <div className="border-t border-zinc-100 px-5 py-3">
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <Input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.currentTarget.value)}
+                  placeholder="Write your message"
+                />
+                <Button onClick={onSendChat}>Send</Button>
+              </div>
+            </div>
+          </div>
 
-                  <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <Input
-                      value={command}
-                      onChange={(e) => setCommand(e.currentTarget.value)}
-                      placeholder="npm run build"
-                    />
-                    <Button variant="outline" onClick={onRunCommand} disabled={!activeWorkspace}>
-                      Run
-                    </Button>
-                  </div>
-                  <p className="text-xs text-zinc-500">{terminalStatus}</p>
+          <div className="grid grid-cols-2 gap-3 p-3">
+            <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-2">
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <Input
+                  value={taskCommandInput}
+                  onChange={(e) => setTaskCommandInput(e.currentTarget.value)}
+                  placeholder="Task command (PowerShell)"
+                />
+                <Button onClick={onRunTask}>Run</Button>
+              </div>
 
-                  <div className="h-full overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2">
-                    {commandHistory.map((item, idx) => (
-                      <pre key={`${idx}-${item.command}`} className="mb-2 whitespace-pre-wrap text-xs">
-                        $ {item.command}\n{item.stdout || item.stderr || "(no output)"}
-                      </pre>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <div className="h-20 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs">
-                    {entries.map((entry) => (
-                      <button
-                        key={entry.relativePath}
-                        className="block w-full rounded px-1 py-0.5 text-left hover:bg-zinc-200"
-                        onClick={() =>
-                          entry.isDir
-                            ? listWorkspaceEntries(activeWorkspace, entry.relativePath).then(setEntries)
-                            : onOpenFile(entry.relativePath)
-                        }
+              <div className="h-full overflow-auto rounded-md bg-zinc-50 p-2">
+                {tasks.map((task) => (
+                  <div
+                    key={task.id}
+                    className={`mb-2 rounded border p-2 text-xs ${
+                      task.id === selectedTaskId ? "border-emerald-500 bg-white" : "border-zinc-200 bg-white"
+                    }`}
+                  >
+                    <button className="w-full text-left" onClick={() => selectTask(task.id)}>
+                      <p className="font-semibold">{task.command}</p>
+                      <p className="text-zinc-500">{task.status}</p>
+                    </button>
+                    {(task.status === "queued" || task.status === "running") && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="mt-1"
+                        onClick={() => cancelTask(task.id)}
                       >
-                        {entry.isDir ? "[DIR]" : "[FILE]"} {entry.relativePath}
-                      </button>
-                    ))}
+                        cancel
+                      </Button>
+                    )}
                   </div>
+                ))}
+              </div>
+            </div>
 
-                  <Textarea
-                    value={editableContent}
-                    onChange={(e) => setEditableContent(e.currentTarget.value)}
-                    placeholder="Select a file to edit"
-                    className="h-24"
-                  />
-
-                  <div className="flex justify-end">
-                    <Button variant="outline" onClick={onSaveFile} disabled={!selectedFile}>
-                      Save file
-                    </Button>
-                  </div>
-
-                  <div className="h-full overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs">
-                    {diffLines.slice(0, 80).map((line, idx) => (
-                      <pre
-                        key={`${line.type}-${idx}`}
-                        className={`${
-                          line.type === "added"
-                            ? "text-emerald-700"
-                            : line.type === "removed"
-                              ? "text-red-700"
-                              : "text-zinc-700"
-                        }`}
-                      >
-                        {line.type === "same" ? "  " : line.type === "added" ? "+ " : "- "}
-                        {line.content}
-                      </pre>
-                    ))}
-                  </div>
-                </div>
+            <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-2">
+              <p className="text-xs font-medium text-zinc-500">Task logs (streaming)</p>
+              <div className="h-full overflow-auto rounded-md bg-zinc-50 p-2">
+                {taskLogs.map((line) => (
+                  <pre
+                    key={line.id}
+                    className={`mb-1 whitespace-pre-wrap text-xs ${
+                      line.stream === "stderr" ? "text-red-700" : "text-zinc-800"
+                    }`}
+                  >
+                    {line.stream === "stderr" ? "[err]" : "[out]"} {line.line}
+                  </pre>
+                ))}
               </div>
             </div>
           </div>
