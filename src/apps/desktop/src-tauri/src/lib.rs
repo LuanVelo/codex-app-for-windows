@@ -1,9 +1,15 @@
+use keyring::{Entry, Error as KeyringError};
 use serde::Serialize;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
+
+const TOKEN_SERVICE: &str = "codex-app-for-windows";
+const TOKEN_ACCOUNT: &str = "oauth-refresh-token";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,7 +115,11 @@ fn list_workspace_entries(
         .filter_map(|entry| {
             let path = entry.path();
             let meta = entry.metadata().ok()?;
-            let relative = path.strip_prefix(&workspace).ok()?.to_string_lossy().replace('\\', "/");
+            let relative = path
+                .strip_prefix(&workspace)
+                .ok()?
+                .to_string_lossy()
+                .replace('\\', "/");
             Some(WorkspaceEntry {
                 name: entry.file_name().to_string_lossy().to_string(),
                 relative_path: relative,
@@ -166,6 +176,84 @@ fn write_workspace_file(
         .map_err(|err| format!("Failed to write file: {err}"))
 }
 
+#[tauri::command]
+fn wait_for_oauth_callback(port: u16, timeout_secs: Option<u64>) -> Result<String, String> {
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .map_err(|err| format!("Failed to start callback server: {err}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|err| format!("Failed to set callback server nonblocking: {err}"))?;
+
+    let started = Instant::now();
+    let timeout = Duration::from_secs(timeout_secs.unwrap_or(120));
+
+    loop {
+        if started.elapsed() > timeout {
+            return Err("OAuth callback timeout.".to_string());
+        }
+
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let mut buffer = [0u8; 8192];
+                let read = stream
+                    .read(&mut buffer)
+                    .map_err(|err| format!("Failed to read callback request: {err}"))?;
+                let request = String::from_utf8_lossy(&buffer[..read]);
+                let first_line = request.lines().next().unwrap_or("");
+                let callback_target = first_line
+                    .split_whitespace()
+                    .nth(1)
+                    .ok_or_else(|| "Invalid callback request.".to_string())?;
+
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><html><body><h2>Login concluido</h2><p>Voce pode fechar esta aba e voltar para o app.</p></body></html>";
+
+                stream
+                    .write_all(response.as_bytes())
+                    .map_err(|err| format!("Failed to write callback response: {err}"))?;
+
+                return Ok(format!("http://127.0.0.1:{port}{callback_target}"));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => return Err(format!("Callback listener failed: {err}")),
+        }
+    }
+}
+
+fn token_entry() -> Result<Entry, String> {
+    Entry::new(TOKEN_SERVICE, TOKEN_ACCOUNT).map_err(|err| format!("Token store unavailable: {err}"))
+}
+
+#[tauri::command]
+fn save_refresh_token(refresh_token: String) -> Result<(), String> {
+    let entry = token_entry()?;
+    entry
+        .set_password(&refresh_token)
+        .map_err(|err| format!("Failed to save refresh token: {err}"))
+}
+
+#[tauri::command]
+fn load_refresh_token() -> Result<Option<String>, String> {
+    let entry = token_entry()?;
+
+    match entry.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(KeyringError::NoEntry) => Ok(None),
+        Err(err) => Err(format!("Failed to read refresh token: {err}")),
+    }
+}
+
+#[tauri::command]
+fn clear_refresh_token() -> Result<(), String> {
+    let entry = token_entry()?;
+
+    match entry.delete_credential() {
+        Ok(_) | Err(KeyringError::NoEntry) => Ok(()),
+        Err(err) => Err(format!("Failed to clear refresh token: {err}")),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -174,7 +262,11 @@ pub fn run() {
             run_terminal_command,
             list_workspace_entries,
             read_workspace_file,
-            write_workspace_file
+            write_workspace_file,
+            wait_for_oauth_callback,
+            save_refresh_token,
+            load_refresh_token,
+            clear_refresh_token
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

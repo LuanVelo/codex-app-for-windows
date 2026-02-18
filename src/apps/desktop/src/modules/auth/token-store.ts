@@ -1,4 +1,6 @@
-const REFRESH_TOKEN_KEY = "codex.auth.refresh_token";
+import { invoke } from "@tauri-apps/api/core";
+
+const FALLBACK_KEY = "codex.auth.refresh_token";
 
 export interface TokenStore {
   getRefreshToken(): Promise<string | null>;
@@ -6,18 +8,28 @@ export interface TokenStore {
   clear(): Promise<void>;
 }
 
-export class BrowserTokenStore implements TokenStore {
+export class SecureTokenStore implements TokenStore {
   async getRefreshToken(): Promise<string | null> {
-    return localStorage.getItem(REFRESH_TOKEN_KEY);
+    try {
+      return await invoke<string | null>("load_refresh_token");
+    } catch {
+      return localStorage.getItem(FALLBACK_KEY);
+    }
   }
 
   async saveRefreshToken(refreshToken: string): Promise<void> {
-    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    try {
+      await invoke("save_refresh_token", { refreshToken });
+    } catch {
+      localStorage.setItem(FALLBACK_KEY, refreshToken);
+    }
   }
 
   async clear(): Promise<void> {
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    try {
+      await invoke("clear_refresh_token");
+    } catch {
+      localStorage.removeItem(FALLBACK_KEY);
+    }
   }
 }
-
-// TODO: replace with Tauri command backed by Windows Credential Manager.

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import "./App.css";
 import { OAuthService } from "./modules/auth/oauth-service";
-import { BrowserTokenStore } from "./modules/auth/token-store";
+import { SecureTokenStore } from "./modules/auth/token-store";
 import type { AuthSession } from "./modules/auth/types";
 import type { AgentSession, ChatMessage, CommandResult, WorkspaceEntry } from "./modules/common/types";
 import { requestAssistantReply } from "./modules/session/codex-client";
@@ -26,12 +26,11 @@ function createMessage(role: ChatMessage["role"], content: string): ChatMessage 
 }
 
 function App() {
-  const authService = useMemo(() => OAuthService.fromEnv(new BrowserTokenStore()), []);
+  const authService = useMemo(() => OAuthService.fromEnv(new SecureTokenStore()), []);
   const [tab, setTab] = useState<TabKey>("sessions");
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [authStatus, setAuthStatus] = useState("Ready");
-  const [callbackUrl, setCallbackUrl] = useState("");
 
   const [workspacePath, setWorkspacePath] = useState("");
 
@@ -60,21 +59,12 @@ function App() {
 
   async function onStartLogin() {
     try {
-      setAuthStatus("Abrindo browser para OAuth...");
-      await authService.beginLogin();
-      setAuthStatus("Browser aberto. Cole a callback URL para concluir o login.");
-    } catch (error) {
-      setAuthStatus(error instanceof Error ? error.message : "Falha ao iniciar login OAuth.");
-    }
-  }
-
-  async function onCompleteLogin() {
-    try {
-      const next = await authService.completeLogin(callbackUrl);
+      setAuthStatus("Abrindo browser e aguardando callback OAuth...");
+      const next = await authService.beginLoginWithLoopback();
       setAuthSession(next);
       setAuthStatus("Autenticado.");
     } catch (error) {
-      setAuthStatus(error instanceof Error ? error.message : "Falha ao concluir login.");
+      setAuthStatus(error instanceof Error ? error.message : "Falha ao iniciar login OAuth.");
     }
   }
 
@@ -91,7 +81,6 @@ function App() {
   async function onLogout() {
     await authService.logout();
     setAuthSession(null);
-    setCallbackUrl("");
     setAuthStatus("Logout concluído.");
   }
 
@@ -205,19 +194,6 @@ function App() {
           </button>
           <button className="ghost" onClick={onLogout}>
             Logout
-          </button>
-        </div>
-
-        <label htmlFor="callback-url">OAuth callback URL (dev)</label>
-        <div className="inline-form">
-          <input
-            id="callback-url"
-            value={callbackUrl}
-            onChange={(event) => setCallbackUrl(event.currentTarget.value)}
-            placeholder="http://127.0.0.1:4815/callback?code=...&state=..."
-          />
-          <button onClick={onCompleteLogin} disabled={!callbackUrl}>
-            Concluir login
           </button>
         </div>
 

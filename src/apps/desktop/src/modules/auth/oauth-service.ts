@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   generateCodeChallenge,
@@ -68,7 +69,20 @@ export class OAuthService {
     return Boolean(this.config.clientId && this.config.authorizeUrl && this.config.tokenUrl);
   }
 
-  async beginLogin(): Promise<void> {
+  private getRedirectPort(): number {
+    const parsed = new URL(this.config.redirectUri);
+    if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") {
+      throw new Error("OAuth redirect URI must use localhost/127.0.0.1 for loopback flow.");
+    }
+
+    if (!parsed.port) {
+      throw new Error("OAuth redirect URI requires an explicit port.");
+    }
+
+    return Number(parsed.port);
+  }
+
+  private async createAuthorizationUrl(): Promise<string> {
     if (!this.isConfigured()) {
       throw new Error("OAuth config missing. Define VITE_OAUTH_* environment variables.");
     }
@@ -90,7 +104,21 @@ export class OAuthService {
     authorize.searchParams.set("state", state);
     authorize.searchParams.set("nonce", nonce);
 
-    await openUrl(authorize.toString());
+    return authorize.toString();
+  }
+
+  async beginLoginWithLoopback(timeoutSecs = 120): Promise<AuthSession> {
+    const authorizationUrl = await this.createAuthorizationUrl();
+    const port = this.getRedirectPort();
+
+    const callbackPromise = invoke<string>("wait_for_oauth_callback", {
+      port,
+      timeoutSecs,
+    });
+
+    await openUrl(authorizationUrl);
+    const callbackUrl = await callbackPromise;
+    return this.completeLogin(callbackUrl);
   }
 
   async completeLogin(callbackUrl: string): Promise<AuthSession> {

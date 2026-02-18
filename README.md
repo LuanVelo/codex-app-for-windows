@@ -25,8 +25,8 @@ O **Codex App for Windows** é um cliente desktop portátil para executar fluxos
 - **Execução:** sem necessidade de permissão de administrador no fluxo padrão
 
 ## Estratégia de autenticação (v1)
-- **Padrão:** `OAuth 2.1 + PKCE` (browser externo + callback local)
-- **Tokens:** `access_token` em memória, `refresh_token` em armazenamento seguro
+- **Padrão:** `OAuth 2.1 + PKCE` (browser externo + callback local loopback)
+- **Tokens:** `access_token` em memória, `refresh_token` em armazenamento seguro do sistema (keyring)
 - **Evolução:** suporte a API key como fallback enterprise
 
 ## Estrutura de dados
@@ -55,7 +55,8 @@ O **Codex App for Windows** é um cliente desktop portátil para executar fluxos
 
 ## Funcionalidades
 ### MVP (v1)
-- Login OAuth com ciclo de sessão (login, refresh, logout)
+- Login OAuth automático com callback loopback local
+- Ciclo de sessão (login, refresh, logout)
 - Gestão de workspaces locais
 - Chat com agente por sessão
 - Terminal integrado para execução de comandos
