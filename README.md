@@ -1,4 +1,4 @@
-# Codex App for Windows
+# Codex App for Windows ( On Hold )
 
 Aplicativo desktop para Windows, focado em produtividade com agentes Codex: sessões de chat/execução, terminal integrado, gestão de workspaces e automações locais.
 
