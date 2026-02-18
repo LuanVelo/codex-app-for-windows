@@ -18,6 +18,7 @@
 
 ### Camada de Aplicação (Use Cases)
 - Orquestração de sessões
+- Orquestração de autenticação OAuth e ciclo de tokens
 - Gerenciamento de automações
 - Sincronização de estado com backend
 - Regras de negócio de execução e histórico
@@ -32,6 +33,8 @@
 - Persistência local (SQLite)
 - Sistema de arquivos (projetos, skills, logs)
 - Process manager (execução de comandos)
+- OAuth client (PKCE + callback handler)
+- Secret store (Windows Credential Manager)
 - Telemetria e logging
 
 ## 3. Módulos necessários (MVP)
@@ -56,18 +59,34 @@
 - Redação de segredos em logs
 - Sandboxing de execução por workspace
 - Políticas de confirmação para comandos destrutivos
+- Tokens OAuth com rotação e refresh controlado
 
-## 6. Observabilidade
+## 6. Autenticação (OAuth-first)
+- Fluxo: Authorization Code com PKCE
+- Janela de login: browser padrão do usuário (não embutido)
+- Callback: loopback local (`http://127.0.0.1:<porta>/callback`) com validação de `state`
+- Sessão:
+  - access token em memória (processo)
+  - refresh token no cofre seguro do Windows
+- Falhas:
+  - refresh inválido: sessão invalidada e re-login obrigatório
+  - timeout no callback: tela com retry seguro
+- Logout:
+  - apagar segredo no cofre
+  - limpar cache local de sessão
+  - revogar sessão remota quando endpoint de revogação estiver disponível
+
+## 7. Observabilidade
 - Log estruturado por módulo
 - Error tracking (Sentry)
 - Métricas de performance: tempo de resposta, sucesso/falha de comando, crash-free sessions
 
-## 7. Estratégia de evolução
+## 8. Estratégia de evolução
 - **Fase 1 (MVP):** sessão, terminal, workspace, autenticação
 - **Fase 2:** automações + integração GitHub avançada
 - **Fase 3:** plugins/skills marketplace + colaboração
 
-## 8. Distribuição portátil no Windows
+## 9. Distribuição portátil no Windows
 - Artefato principal: `codex-app-for-windows-portable.zip`
 - Conteúdo: executável + runtime/recursos necessários para execução local
 - Requisito funcional: rodar sem installer e sem elevação de privilégio

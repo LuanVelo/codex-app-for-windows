@@ -7,7 +7,8 @@
 - Pipeline de build para artefato portátil (`.zip`)
 
 ## Fase 1 - MVP funcional (3-5 semanas)
-- Login/configuração de token
+- Login OAuth (PKCE + callback local)
+- Ciclo de sessão (refresh automático + logout seguro)
 - Tela principal de sessão
 - Terminal integrado
 - Persistência local de histórico

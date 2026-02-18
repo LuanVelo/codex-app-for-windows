@@ -25,16 +25,23 @@ Construir um aplicativo desktop para Windows com foco em:
 - **Opcional:** instalador (`NSIS/MSI`) para canal corporativo
 - **Política:** manter compatibilidade com execução sem privilégio administrativo
 
+## Estratégia de autenticação (v1)
+- **Padrão:** login `OAuth 2.1 + PKCE` (browser externo + callback local)
+- **Sessão:** access token em memória e refresh token em cofre seguro do Windows
+- **Fallback futuro:** modo API key para cenários enterprise específicos
+
 ## Estrutura do repositório
 ```text
 .
 ├── docs/
 │   ├── architecture.md
+│   ├── authentication.md
 │   ├── roadmap.md
 │   └── adr/
 │       ├── 0001-architecture-style.md
 │       └── 0002-desktop-framework.md
 │       └── 0003-windows-portable-first.md
+│       └── 0004-auth-oauth-first.md
 ├── src/
 │   ├── apps/
 │   │   └── desktop/
