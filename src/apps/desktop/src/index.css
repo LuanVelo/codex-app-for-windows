@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+:root {
+  color: #111827;
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 0% 0%, #f7fdf5, transparent 38%),
+    radial-gradient(circle at 100% 0%, #eef6ff, transparent 32%),
+    #f5f6f8;
+}

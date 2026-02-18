@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import "./App.css";
+import { FolderOpen, MessageSquarePlus, Settings } from "lucide-react";
 import { OAuthService } from "./modules/auth/oauth-service";
 import {
   SecureTokenStore,
@@ -23,8 +23,12 @@ import {
   readWorkspaceFile,
   writeWorkspaceFile,
 } from "./modules/workspace/workspace-service";
+import { Button } from "./components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
+import { Dialog, DialogClose, DialogContent, DialogTrigger } from "./components/ui/dialog";
+import { Input } from "./components/ui/input";
+import { Textarea } from "./components/ui/textarea";
 
-type TabKey = "sessions" | "terminal" | "workspace";
 type AuthMethod = "oauth" | "api_key";
 
 interface AuthSettings {
@@ -35,6 +39,7 @@ interface AuthSettings {
 }
 
 const AUTH_SETTINGS_KEY = "codex.auth.settings.v1";
+const WORKSPACES_KEY = "codex.workspaces.v1";
 
 function defaultOAuthConfig(): OAuthConfig {
   return {
@@ -55,15 +60,10 @@ function loadAuthSettings(): AuthSettings {
   };
 
   const raw = localStorage.getItem(AUTH_SETTINGS_KEY);
-  if (!raw) {
-    return defaults;
-  }
+  if (!raw) return defaults;
 
   try {
-    const parsed = JSON.parse(raw) as Partial<AuthSettings> & {
-      oauth?: Partial<OAuthConfig>;
-    };
-
+    const parsed = JSON.parse(raw) as Partial<AuthSettings> & { oauth?: Partial<OAuthConfig> };
     return {
       method: parsed.method === "api_key" ? "api_key" : "oauth",
       oauth: {
@@ -82,15 +82,10 @@ function loadAuthSettings(): AuthSettings {
 }
 
 function createMessage(role: ChatMessage["role"], content: string): ChatMessage {
-  return {
-    id: crypto.randomUUID(),
-    role,
-    content,
-    createdAt: Date.now(),
-  };
+  return { id: crypto.randomUUID(), role, content, createdAt: Date.now() };
 }
 
-function missingOAuthConfigFields(config: OAuthConfig): string[] {
+function missingOAuthFields(config: OAuthConfig): string[] {
   const missing: string[] = [];
   if (!config.clientId.trim()) missing.push("Client ID");
   if (!config.authorizeUrl.trim()) missing.push("Authorize URL");
@@ -99,32 +94,40 @@ function missingOAuthConfigFields(config: OAuthConfig): string[] {
   return missing;
 }
 
+function loadWorkspaces(): string[] {
+  const raw = localStorage.getItem(WORKSPACES_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as string[];
+    return parsed.filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function saveWorkspaces(items: string[]) {
+  localStorage.setItem(WORKSPACES_KEY, JSON.stringify(items));
+}
+
 function App() {
   const [authSettings, setAuthSettings] = useState<AuthSettings>(() => loadAuthSettings());
-  const authService = useMemo(
-    () => new OAuthService(authSettings.oauth, new SecureTokenStore()),
-    [authSettings.oauth],
-  );
-
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authDraft, setAuthDraft] = useState<AuthSettings>(authSettings);
   const [apiKey, setApiKey] = useState("");
   const [apiKeyDraft, setApiKeyDraft] = useState("");
-
-  const [tab, setTab] = useState<TabKey>("sessions");
-  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
   const [authStatus, setAuthStatus] = useState("Not connected");
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
 
-  const [workspacePath, setWorkspacePath] = useState("");
+  const [workspaceInput, setWorkspaceInput] = useState("");
+  const [workspaces, setWorkspaces] = useState<string[]>(() => loadWorkspaces());
+  const [activeWorkspace, setActiveWorkspace] = useState<string>(() => loadWorkspaces()[0] ?? "");
+  const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
 
   const [sessions, setSessions] = useState<AgentSession[]>(() => {
     const loaded = loadSessions();
-    return loaded.length ? loaded : [createSession("Primeira sessão")];
+    return loaded.length ? loaded : [createSession("New chat")];
   });
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => {
-    const loaded = loadSessions();
-    return loaded[0]?.id ?? "";
-  });
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => loadSessions()[0]?.id ?? "");
+
   const [prompt, setPrompt] = useState("");
   const [sessionStatus, setSessionStatus] = useState("Idle");
 
@@ -132,61 +135,86 @@ function App() {
   const [terminalStatus, setTerminalStatus] = useState("Idle");
   const [commandHistory, setCommandHistory] = useState<Array<CommandResult & { command: string }>>([]);
 
-  const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
-  const [workspaceStatus, setWorkspaceStatus] = useState("Idle");
   const [selectedFile, setSelectedFile] = useState("");
   const [originalContent, setOriginalContent] = useState("");
   const [editableContent, setEditableContent] = useState("");
 
-  const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sessions[0] ?? null;
+  const authService = useMemo(
+    () => new OAuthService(authSettings.oauth, new SecureTokenStore()),
+    [authSettings.oauth],
+  );
+
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? sessions[0] ?? null;
+  const diffLines = buildLineDiff(originalContent, editableContent);
 
   useEffect(() => {
-    async function bootstrapAuth() {
-      const loadedKey = await loadApiKey();
-      setApiKey(loadedKey ?? "");
+    async function bootstrap() {
+      const key = await loadApiKey();
+      setApiKey(key ?? "");
 
-      if (authSettings.method !== "oauth" || !authService.isConfigured()) {
-        if (authSettings.method === "api_key" && loadedKey) {
-          setAuthStatus("Connected with API key.");
-        } else if (authSettings.method === "api_key") {
-          setAuthStatus("API key not configured.");
-        } else {
-          setAuthStatus("OAuth not configured.");
-        }
+      if (authSettings.method === "api_key") {
+        setAuthStatus(key ? "Connected with API key" : "API key not configured");
+        return;
+      }
+
+      if (!authService.isConfigured()) {
+        setAuthStatus("OAuth not configured");
         return;
       }
 
       try {
         const restored = await authService.refreshSession();
         setAuthSession(restored);
-        setAuthStatus("Connected with OAuth.");
+        setAuthStatus("Connected with OAuth");
       } catch {
-        setAuthStatus("OAuth session not active. Open Add Key to connect.");
+        setAuthStatus("OAuth session not active");
       }
     }
 
-    void bootstrapAuth();
+    void bootstrap();
   }, [authService, authSettings.method]);
 
-  function openAuthModal() {
-    setAuthDraft(authSettings);
-    setApiKeyDraft(apiKey);
-    setIsAuthModalOpen(true);
+  useEffect(() => {
+    if (!activeWorkspace) {
+      setEntries([]);
+      return;
+    }
+
+    async function loadRoot() {
+      try {
+        const data = await listWorkspaceEntries(activeWorkspace, "");
+        setEntries(data);
+      } catch {
+        setEntries([]);
+      }
+    }
+
+    void loadRoot();
+  }, [activeWorkspace]);
+
+  function onCreateChat() {
+    const next = createSession();
+    setSessions(loadSessions());
+    setActiveSessionId(next.id);
   }
 
-  function closeAuthModal() {
-    setIsAuthModalOpen(false);
+  function onAddWorkspace() {
+    const value = workspaceInput.trim();
+    if (!value) return;
+    if (workspaces.includes(value)) {
+      setWorkspaceInput("");
+      setActiveWorkspace(value);
+      return;
+    }
+
+    const updated = [value, ...workspaces];
+    setWorkspaces(updated);
+    saveWorkspaces(updated);
+    setWorkspaceInput("");
+    setActiveWorkspace(value);
   }
 
-  async function connectOAuthNow(config: OAuthConfig) {
-    const runtime = new OAuthService(config, new SecureTokenStore());
-    setAuthStatus("Opening browser and waiting for OAuth callback...");
-    const next = await runtime.beginLoginWithLoopback();
-    setAuthSession(next);
-    setAuthStatus("Connected with OAuth.");
-  }
-
-  async function onSaveAuthSettings() {
+  async function onSaveSettings() {
     localStorage.setItem(AUTH_SETTINGS_KEY, JSON.stringify(authDraft));
     setAuthSettings(authDraft);
 
@@ -195,396 +223,374 @@ function App() {
         await saveApiKey(apiKeyDraft.trim());
         setApiKey(apiKeyDraft.trim());
         setAuthSession(null);
-        setAuthStatus("Connected with API key.");
+        setAuthStatus("Connected with API key");
       } else {
         await clearApiKey();
         setApiKey("");
-        setAuthStatus("API key cleared.");
+        setAuthStatus("API key cleared");
       }
-      setIsAuthModalOpen(false);
       return;
     }
 
-    const missing = missingOAuthConfigFields(authDraft.oauth);
+    const missing = missingOAuthFields(authDraft.oauth);
     if (missing.length > 0) {
       setAuthStatus(`Missing OAuth fields: ${missing.join(", ")}`);
       return;
     }
 
     try {
-      await connectOAuthNow(authDraft.oauth);
-      setIsAuthModalOpen(false);
+      const oauth = new OAuthService(authDraft.oauth, new SecureTokenStore());
+      const session = await oauth.beginLoginWithLoopback();
+      setAuthSession(session);
+      setAuthStatus("Connected with OAuth");
     } catch (error) {
-      setAuthStatus(error instanceof Error ? error.message : "Failed to connect OAuth.");
+      setAuthStatus(error instanceof Error ? error.message : "OAuth connection failed");
     }
-  }
-
-  function onCreateSession() {
-    const next = createSession();
-    setSessions(loadSessions());
-    setActiveSessionId(next.id);
   }
 
   async function onSendPrompt() {
-    if (!activeSession || !prompt.trim()) {
-      return;
-    }
+    if (!activeSession || !prompt.trim()) return;
 
     const userText = prompt.trim();
     setPrompt("");
-
     const userMessage = createMessage("user", userText);
     const afterUser = appendMessage(activeSession.id, userMessage);
     setSessions(afterUser);
-    setSessionStatus("Generating assistant reply...");
+    setSessionStatus("Generating reply...");
 
     try {
-      const current = afterUser.find((item) => item.id === activeSession.id);
-      const history = current?.messages ?? [];
-
-      const replyText = await requestAssistantReply(history, userText, {
+      const history = afterUser.find((s) => s.id === activeSession.id)?.messages ?? [];
+      const reply = await requestAssistantReply(history, userText, {
         method: authSettings.method,
         accessToken: authSession?.accessToken,
         apiKey,
         model: authSettings.apiModel,
         apiBaseUrl: authSettings.apiBaseUrl,
       });
-
-      const assistantMessage = createMessage("assistant", replyText);
-      const afterAssistant = appendMessage(activeSession.id, assistantMessage);
-      setSessions(afterAssistant);
-      setSessionStatus("Reply received.");
+      setSessions(appendMessage(activeSession.id, createMessage("assistant", reply)));
+      setSessionStatus("Reply received");
     } catch (error) {
-      const systemMessage = createMessage(
-        "system",
-        error instanceof Error ? error.message : "Failed to process assistant reply.",
+      setSessions(
+        appendMessage(
+          activeSession.id,
+          createMessage("system", error instanceof Error ? error.message : "Request failed"),
+        ),
       );
-      const afterError = appendMessage(activeSession.id, systemMessage);
-      setSessions(afterError);
-      setSessionStatus("Assistant request failed.");
+      setSessionStatus("Request failed");
     }
   }
 
   async function onRunCommand() {
     try {
-      setTerminalStatus("Executando comando...");
-      const result = await runWorkspaceCommand(workspacePath, command);
-      setCommandHistory((prev) => [{ ...result, command }, ...prev].slice(0, 30));
-      setTerminalStatus(`Comando finalizado com exit code ${result.exitCode}.`);
+      setTerminalStatus("Running command...");
+      const result = await runWorkspaceCommand(activeWorkspace, command);
+      setCommandHistory((prev) => [{ ...result, command }, ...prev].slice(0, 20));
+      setTerminalStatus(`Done (exit ${result.exitCode})`);
     } catch (error) {
-      setTerminalStatus(error instanceof Error ? error.message : "Falha ao executar comando.");
+      setTerminalStatus(error instanceof Error ? error.message : "Command failed");
     }
   }
 
-  async function onLoadEntries(relativePath = "") {
+  async function onOpenFile(path: string) {
     try {
-      setWorkspaceStatus("Carregando arquivos...");
-      const items = await listWorkspaceEntries(workspacePath, relativePath);
-      setEntries(items);
-      setWorkspaceStatus(`Foram listados ${items.length} itens.`);
-    } catch (error) {
-      setWorkspaceStatus(error instanceof Error ? error.message : "Falha ao listar arquivos.");
-    }
-  }
-
-  async function onOpenFile(relativePath: string) {
-    try {
-      setWorkspaceStatus(`Abrindo ${relativePath}...`);
-      const content = await readWorkspaceFile(workspacePath, relativePath);
-      setSelectedFile(relativePath);
+      const content = await readWorkspaceFile(activeWorkspace, path);
+      setSelectedFile(path);
       setOriginalContent(content);
       setEditableContent(content);
-      setWorkspaceStatus(`Arquivo ${relativePath} carregado.`);
-    } catch (error) {
-      setWorkspaceStatus(error instanceof Error ? error.message : "Falha ao abrir arquivo.");
+    } catch {
+      setSelectedFile("");
     }
   }
 
   async function onSaveFile() {
-    if (!selectedFile) {
-      return;
-    }
-
-    try {
-      await writeWorkspaceFile(workspacePath, selectedFile, editableContent);
-      setOriginalContent(editableContent);
-      setWorkspaceStatus(`Arquivo ${selectedFile} salvo.`);
-    } catch (error) {
-      setWorkspaceStatus(error instanceof Error ? error.message : "Falha ao salvar arquivo.");
-    }
+    if (!selectedFile) return;
+    await writeWorkspaceFile(activeWorkspace, selectedFile, editableContent);
+    setOriginalContent(editableContent);
   }
 
-  const diffLines = buildLineDiff(originalContent, editableContent);
-  const missingOAuthFields = missingOAuthConfigFields(authDraft.oauth);
+  const missingDraft = missingOAuthFields(authDraft.oauth);
 
   return (
-    <main className="app">
-      {isAuthModalOpen && (
-        <section className="auth-overlay">
-          <div className="auth-modal">
-            <h2>Add Key</h2>
-            <p>Select authentication method and save.</p>
+    <div className="h-full p-4 md:p-6">
+      <div className="mx-auto grid h-full max-w-[1500px] grid-cols-1 gap-4 md:grid-cols-[320px_1fr]">
+        <Card className="flex h-full flex-col">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-xl">Codex Windows</CardTitle>
+            <p className="text-xs text-zinc-500">{authStatus}</p>
+          </CardHeader>
+          <CardContent className="flex flex-1 flex-col gap-4">
+            <Button onClick={onCreateChat} className="w-full justify-start">
+              <MessageSquarePlus className="h-4 w-4" />
+              New Chat
+            </Button>
 
-            <label htmlFor="auth-method">Method</label>
-            <select
-              id="auth-method"
-              value={authDraft.method}
-              onChange={(event) =>
-                setAuthDraft((prev) => ({
-                  ...prev,
-                  method: event.currentTarget.value === "api_key" ? "api_key" : "oauth",
-                }))
-              }
-            >
-              <option value="oauth">OAuth</option>
-              <option value="api_key">OpenAI API Key</option>
-            </select>
-
-            {authDraft.method === "api_key" ? (
-              <div className="oauth-grid modal-oauth-grid">
-                <input
-                  value={apiKeyDraft}
-                  onChange={(event) => setApiKeyDraft(event.currentTarget.value)}
-                  placeholder="OpenAI API key"
-                />
-                <input
-                  value={authDraft.apiModel}
-                  onChange={(event) =>
-                    setAuthDraft((prev) => ({ ...prev, apiModel: event.currentTarget.value }))
-                  }
-                  placeholder="Model (e.g. gpt-4.1-mini)"
-                />
-                <input
-                  value={authDraft.apiBaseUrl}
-                  onChange={(event) =>
-                    setAuthDraft((prev) => ({ ...prev, apiBaseUrl: event.currentTarget.value }))
-                  }
-                  placeholder="API base URL"
-                />
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Chats</p>
+              <div className="space-y-1">
+                {sessions.map((session) => (
+                  <button
+                    key={session.id}
+                    onClick={() => setActiveSessionId(session.id)}
+                    className={`w-full rounded-md px-3 py-2 text-left text-sm ${
+                      session.id === activeSession?.id
+                        ? "bg-emerald-700 text-white"
+                        : "bg-zinc-100 text-zinc-800 hover:bg-zinc-200"
+                    }`}
+                  >
+                    {session.title}
+                  </button>
+                ))}
               </div>
-            ) : (
-              <div className="oauth-grid modal-oauth-grid">
-                <input
-                  value={authDraft.oauth.clientId}
-                  onChange={(event) =>
-                    setAuthDraft((prev) => ({
-                      ...prev,
-                      oauth: { ...prev.oauth, clientId: event.currentTarget.value },
-                    }))
-                  }
-                  placeholder="OAuth Client ID"
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Workspaces</p>
+              <div className="flex gap-2">
+                <Input
+                  value={workspaceInput}
+                  onChange={(e) => setWorkspaceInput(e.currentTarget.value)}
+                  placeholder="C:/repos/project"
                 />
-                <input
-                  value={authDraft.oauth.redirectUri}
-                  onChange={(event) =>
-                    setAuthDraft((prev) => ({
-                      ...prev,
-                      oauth: { ...prev.oauth, redirectUri: event.currentTarget.value },
-                    }))
-                  }
-                  placeholder="Redirect URI (loopback)"
-                />
-                <input
-                  value={authDraft.oauth.authorizeUrl}
-                  onChange={(event) =>
-                    setAuthDraft((prev) => ({
-                      ...prev,
-                      oauth: { ...prev.oauth, authorizeUrl: event.currentTarget.value },
-                    }))
-                  }
-                  placeholder="Authorize URL"
-                />
-                <input
-                  value={authDraft.oauth.tokenUrl}
-                  onChange={(event) =>
-                    setAuthDraft((prev) => ({
-                      ...prev,
-                      oauth: { ...prev.oauth, tokenUrl: event.currentTarget.value },
-                    }))
-                  }
-                  placeholder="Token URL"
-                />
-                <input
-                  value={authDraft.oauth.scope}
-                  onChange={(event) =>
-                    setAuthDraft((prev) => ({
-                      ...prev,
-                      oauth: { ...prev.oauth, scope: event.currentTarget.value },
-                    }))
-                  }
-                  placeholder="Scopes"
-                />
+                <Button variant="outline" onClick={onAddWorkspace}>
+                  Add
+                </Button>
               </div>
-            )}
-
-            {authDraft.method === "oauth" && missingOAuthFields.length > 0 && (
-              <p className="status-line">Missing OAuth fields: {missingOAuthFields.join(", ")}</p>
-            )}
-
-            <div className="auth-actions">
-              <button onClick={onSaveAuthSettings}>Save</button>
-              <button className="ghost" onClick={closeAuthModal}>
-                Close
-              </button>
+              <div className="space-y-1">
+                {workspaces.map((workspace) => (
+                  <button
+                    key={workspace}
+                    onClick={() => setActiveWorkspace(workspace)}
+                    className={`w-full rounded-md px-3 py-2 text-left text-sm ${
+                      workspace === activeWorkspace
+                        ? "bg-zinc-900 text-white"
+                        : "bg-zinc-100 text-zinc-800 hover:bg-zinc-200"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <FolderOpen className="h-4 w-4" />
+                      <span className="truncate">{workspace}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        </section>
-      )}
 
-      <header className="top-card">
-        <div>
-          <p className="eyebrow">Codex App for Windows</p>
-          <h1>Workspace Agent Console</h1>
-          <p className="status-line">Auth: {authStatus}</p>
+            <div className="mt-auto">
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="secondary" className="w-full justify-start" onClick={() => {
+                    setAuthDraft(authSettings);
+                    setApiKeyDraft(apiKey);
+                  }}>
+                    <Settings className="h-4 w-4" />
+                    Settings
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <h2 className="text-lg font-semibold">Authentication settings</h2>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Method</label>
+                    <select
+                      className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
+                      value={authDraft.method}
+                      onChange={(e) =>
+                        setAuthDraft((prev) => ({ ...prev, method: e.currentTarget.value as AuthMethod }))
+                      }
+                    >
+                      <option value="oauth">OAuth</option>
+                      <option value="api_key">OpenAI API Key</option>
+                    </select>
+                  </div>
+
+                  {authDraft.method === "api_key" ? (
+                    <div className="space-y-2">
+                      <Input
+                        placeholder="OpenAI API key"
+                        value={apiKeyDraft}
+                        onChange={(e) => setApiKeyDraft(e.currentTarget.value)}
+                      />
+                      <Input
+                        placeholder="Model"
+                        value={authDraft.apiModel}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({ ...prev, apiModel: e.currentTarget.value }))
+                        }
+                      />
+                      <Input
+                        placeholder="API base URL"
+                        value={authDraft.apiBaseUrl}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({ ...prev, apiBaseUrl: e.currentTarget.value }))
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Input
+                        placeholder="OAuth Client ID"
+                        value={authDraft.oauth.clientId}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({
+                            ...prev,
+                            oauth: { ...prev.oauth, clientId: e.currentTarget.value },
+                          }))
+                        }
+                      />
+                      <Input
+                        placeholder="Authorize URL"
+                        value={authDraft.oauth.authorizeUrl}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({
+                            ...prev,
+                            oauth: { ...prev.oauth, authorizeUrl: e.currentTarget.value },
+                          }))
+                        }
+                      />
+                      <Input
+                        placeholder="Token URL"
+                        value={authDraft.oauth.tokenUrl}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({
+                            ...prev,
+                            oauth: { ...prev.oauth, tokenUrl: e.currentTarget.value },
+                          }))
+                        }
+                      />
+                      <Input
+                        placeholder="Redirect URI"
+                        value={authDraft.oauth.redirectUri}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({
+                            ...prev,
+                            oauth: { ...prev.oauth, redirectUri: e.currentTarget.value },
+                          }))
+                        }
+                      />
+                      <Input
+                        placeholder="Scopes"
+                        value={authDraft.oauth.scope}
+                        onChange={(e) =>
+                          setAuthDraft((prev) => ({
+                            ...prev,
+                            oauth: { ...prev.oauth, scope: e.currentTarget.value },
+                          }))
+                        }
+                      />
+                      {missingDraft.length > 0 && (
+                        <p className="text-xs text-red-600">Missing: {missingDraft.join(", ")}</p>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <DialogClose asChild>
+                      <Button variant="ghost">Close</Button>
+                    </DialogClose>
+                    <DialogClose asChild>
+                      <Button onClick={onSaveSettings}>Save</Button>
+                    </DialogClose>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid h-full grid-rows-[1fr_300px] gap-4">
+          <Card className="overflow-hidden">
+            <CardHeader className="pb-2">
+              <CardTitle>{activeSession?.title ?? "Chat"}</CardTitle>
+              <p className="text-xs text-zinc-500">{sessionStatus}</p>
+            </CardHeader>
+            <CardContent className="flex h-[calc(100%-4rem)] flex-col gap-3">
+              <div className="flex-1 space-y-2 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                {(activeSession?.messages ?? []).map((message) => (
+                  <article key={message.id} className="rounded-md border border-zinc-200 bg-white p-2">
+                    <p className="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">{message.role}</p>
+                    <pre className="whitespace-pre-wrap text-sm">{message.content}</pre>
+                  </article>
+                ))}
+              </div>
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <Input
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.currentTarget.value)}
+                  placeholder="Describe what you want to do"
+                />
+                <Button onClick={onSendPrompt}>Send</Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="overflow-hidden">
+            <CardHeader className="pb-2">
+              <CardTitle>Activity</CardTitle>
+              <p className="text-xs text-zinc-500">Commands, files and diffs</p>
+            </CardHeader>
+            <CardContent className="grid h-[calc(100%-4rem)] grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <div className="grid grid-cols-[1fr_auto] gap-2">
+                  <Input
+                    value={command}
+                    onChange={(e) => setCommand(e.currentTarget.value)}
+                    placeholder="npm run build"
+                  />
+                  <Button onClick={onRunCommand} disabled={!activeWorkspace}>Run</Button>
+                </div>
+                <p className="text-xs text-zinc-500">{terminalStatus}</p>
+                <div className="h-44 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2">
+                  {commandHistory.map((item, idx) => (
+                    <pre key={`${idx}-${item.command}`} className="mb-2 whitespace-pre-wrap text-xs">
+                      $ {item.command}\n{item.stdout || item.stderr || "(no output)"}
+                    </pre>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="h-24 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs">
+                  {entries.map((entry) => (
+                    <button
+                      key={entry.relativePath}
+                      className="block w-full rounded px-1 py-0.5 text-left hover:bg-zinc-200"
+                      onClick={() =>
+                        entry.isDir
+                          ? listWorkspaceEntries(activeWorkspace, entry.relativePath).then(setEntries)
+                          : onOpenFile(entry.relativePath)
+                      }
+                    >
+                      {entry.isDir ? "[DIR]" : "[FILE]"} {entry.relativePath}
+                    </button>
+                  ))}
+                </div>
+                <Textarea
+                  value={editableContent}
+                  onChange={(e) => setEditableContent(e.currentTarget.value)}
+                  placeholder="Select a file to edit"
+                  className="h-24"
+                />
+                <div className="flex justify-end">
+                  <Button variant="outline" onClick={onSaveFile} disabled={!selectedFile}>
+                    Save file
+                  </Button>
+                </div>
+                <div className="h-24 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs">
+                  {diffLines.slice(0, 80).map((line, idx) => (
+                    <pre
+                      key={`${line.type}-${idx}`}
+                      className={`${line.type === "added" ? "text-emerald-700" : line.type === "removed" ? "text-red-700" : "text-zinc-700"}`}
+                    >
+                      {line.type === "same" ? "  " : line.type === "added" ? "+ " : "- "}
+                      {line.content}
+                    </pre>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
-        <div className="auth-actions">
-          <button onClick={openAuthModal}>Add Key</button>
-        </div>
-      </header>
-
-      <section className="workspace-card">
-        <label htmlFor="workspace-path">Workspace path</label>
-        <div className="inline-form">
-          <input
-            id="workspace-path"
-            value={workspacePath}
-            onChange={(event) => setWorkspacePath(event.currentTarget.value)}
-            placeholder="C:/repos/meu-projeto"
-          />
-          <button onClick={() => onLoadEntries()} disabled={!workspacePath.trim()}>
-            Carregar
-          </button>
-        </div>
-      </section>
-
-      <nav className="tabs">
-        <button className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")}>
-          Sessions
-        </button>
-        <button className={tab === "terminal" ? "active" : ""} onClick={() => setTab("terminal")}>
-          Terminal
-        </button>
-        <button className={tab === "workspace" ? "active" : ""} onClick={() => setTab("workspace")}>
-          Workspace
-        </button>
-      </nav>
-
-      {tab === "sessions" && (
-        <section className="panel two-column">
-          <aside className="session-list">
-            <div className="panel-head">
-              <h2>Sessões</h2>
-              <button onClick={onCreateSession}>Nova</button>
-            </div>
-
-            {sessions.map((item) => (
-              <button
-                key={item.id}
-                className={item.id === activeSession?.id ? "session-item active" : "session-item"}
-                onClick={() => setActiveSessionId(item.id)}
-              >
-                <strong>{item.title}</strong>
-                <span>{new Date(item.updatedAt).toLocaleString()}</span>
-              </button>
-            ))}
-          </aside>
-
-          <div className="chat-area">
-            <h2>{activeSession?.title ?? "Sem sessão"}</h2>
-            <div className="messages">
-              {(activeSession?.messages ?? []).map((message) => (
-                <article key={message.id} className={`msg ${message.role}`}>
-                  <header>{message.role}</header>
-                  <pre>{message.content}</pre>
-                </article>
-              ))}
-            </div>
-
-            <div className="inline-form">
-              <input
-                value={prompt}
-                onChange={(event) => setPrompt(event.currentTarget.value)}
-                placeholder="Descreva uma tarefa para o agente..."
-              />
-              <button onClick={onSendPrompt}>Enviar</button>
-            </div>
-            <p className="status-line">Session: {sessionStatus}</p>
-          </div>
-        </section>
-      )}
-
-      {tab === "terminal" && (
-        <section className="panel">
-          <h2>Terminal</h2>
-          <div className="inline-form">
-            <input
-              value={command}
-              onChange={(event) => setCommand(event.currentTarget.value)}
-              placeholder="npm run build"
-            />
-            <button onClick={onRunCommand}>Executar</button>
-          </div>
-
-          <p className="status-line">Terminal: {terminalStatus}</p>
-
-          <div className="terminal-log">
-            {commandHistory.map((item, index) => (
-              <article key={`${item.command}-${index}`}>
-                <h3>
-                  {item.command} (exit {item.exitCode}, {item.durationMs}ms)
-                </h3>
-                <pre>{item.stdout || "(sem stdout)"}</pre>
-                {item.stderr && <pre className="stderr">{item.stderr}</pre>}
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {tab === "workspace" && (
-        <section className="panel two-column">
-          <aside className="file-list">
-            <h2>Arquivos</h2>
-            <div className="file-items">
-              {entries.map((entry) => (
-                <button
-                  key={entry.relativePath}
-                  className={entry.isDir ? "dir" : "file"}
-                  onClick={() =>
-                    entry.isDir ? onLoadEntries(entry.relativePath) : onOpenFile(entry.relativePath)
-                  }
-                >
-                  {entry.isDir ? "[DIR]" : "[FILE]"} {entry.relativePath}
-                </button>
-              ))}
-            </div>
-          </aside>
-
-          <div className="editor-area">
-            <h2>{selectedFile || "Selecione um arquivo"}</h2>
-            <textarea
-              value={editableContent}
-              onChange={(event) => setEditableContent(event.currentTarget.value)}
-              placeholder="Conteúdo do arquivo"
-            />
-            <button onClick={onSaveFile} disabled={!selectedFile}>
-              Salvar arquivo
-            </button>
-            <p className="status-line">Workspace: {workspaceStatus}</p>
-
-            <h3>Diff preview</h3>
-            <div className="diff-box">
-              {diffLines.map((line, index) => (
-                <pre key={`${line.type}-${index}`} className={line.type}>
-                  {line.type === "same" ? "  " : line.type === "added" ? "+ " : "- "}
-                  {line.content}
-                </pre>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
-    </main>
+      </div>
+    </div>
   );
 }
 
