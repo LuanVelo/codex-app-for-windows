@@ -1,0 +1,53 @@
+name: Build Windows Portable
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/apps/desktop/**'
+      - '.github/workflows/windows-portable.yml'
+  pull_request:
+    paths:
+      - 'src/apps/desktop/**'
+      - '.github/workflows/windows-portable.yml'
+
+jobs:
+  build-portable:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: src/apps/desktop
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/apps/desktop/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build portable executable (no installer)
+        run: npm run tauri build -- --no-bundle
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path portable | Out-Null
+          Copy-Item src-tauri/target/release/codex_app_for_windows.exe portable/CodexApp.exe
+          Compress-Archive -Path portable/* -DestinationPath codex-app-for-windows-portable.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-app-for-windows-portable
+          path: src/apps/desktop/codex-app-for-windows-portable.zip

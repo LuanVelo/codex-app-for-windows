@@ -65,3 +65,13 @@ Construir um aplicativo desktop para Windows com foco em:
 2. Implementar autenticação e gestão de sessão.
 3. Criar módulo de terminal e execução de comandos.
 4. Publicar build Windows portátil (zip) como artefato padrão.
+
+## Desenvolvimento
+- App desktop: `src/apps/desktop`
+- Rodar local: `cd src/apps/desktop && npm install && npm run tauri dev`
+- Build local sem instalador: `cd src/apps/desktop && npm run tauri build -- --no-bundle`
+
+## Build portátil para outro PC
+- Workflow: `.github/workflows/windows-portable.yml`
+- Saída: artifact `codex-app-for-windows-portable.zip` no GitHub Actions
+- Execução no Windows alvo: descompactar e abrir `CodexApp.exe`
