@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 const TOKEN_SERVICE: &str = "codex-app-for-windows";
 const TOKEN_ACCOUNT: &str = "oauth-refresh-token";
+const API_KEY_ACCOUNT: &str = "openai-api-key";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -225,6 +226,10 @@ fn token_entry() -> Result<Entry, String> {
     Entry::new(TOKEN_SERVICE, TOKEN_ACCOUNT).map_err(|err| format!("Token store unavailable: {err}"))
 }
 
+fn api_key_entry() -> Result<Entry, String> {
+    Entry::new(TOKEN_SERVICE, API_KEY_ACCOUNT).map_err(|err| format!("Token store unavailable: {err}"))
+}
+
 #[tauri::command]
 fn save_refresh_token(refresh_token: String) -> Result<(), String> {
     let entry = token_entry()?;
@@ -254,6 +259,35 @@ fn clear_refresh_token() -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+fn save_api_key(api_key: String) -> Result<(), String> {
+    let entry = api_key_entry()?;
+    entry
+        .set_password(&api_key)
+        .map_err(|err| format!("Failed to save API key: {err}"))
+}
+
+#[tauri::command]
+fn load_api_key() -> Result<Option<String>, String> {
+    let entry = api_key_entry()?;
+
+    match entry.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(KeyringError::NoEntry) => Ok(None),
+        Err(err) => Err(format!("Failed to read API key: {err}")),
+    }
+}
+
+#[tauri::command]
+fn clear_api_key() -> Result<(), String> {
+    let entry = api_key_entry()?;
+
+    match entry.delete_credential() {
+        Ok(_) | Err(KeyringError::NoEntry) => Ok(()),
+        Err(err) => Err(format!("Failed to clear API key: {err}")),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -266,7 +300,10 @@ pub fn run() {
             wait_for_oauth_callback,
             save_refresh_token,
             load_refresh_token,
-            clear_refresh_token
+            clear_refresh_token,
+            save_api_key,
+            load_api_key,
+            clear_api_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

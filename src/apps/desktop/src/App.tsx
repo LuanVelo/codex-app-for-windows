@@ -1,9 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import { OAuthService } from "./modules/auth/oauth-service";
-import { SecureTokenStore } from "./modules/auth/token-store";
+import {
+  SecureTokenStore,
+  clearApiKey,
+  loadApiKey,
+  saveApiKey,
+} from "./modules/auth/token-store";
 import type { AuthSession, OAuthConfig } from "./modules/auth/types";
-import type { AgentSession, ChatMessage, CommandResult, WorkspaceEntry } from "./modules/common/types";
+import type {
+  AgentSession,
+  ChatMessage,
+  CommandResult,
+  WorkspaceEntry,
+} from "./modules/common/types";
 import { requestAssistantReply } from "./modules/session/codex-client";
 import { appendMessage, createSession, loadSessions } from "./modules/session/session-store";
 import { runWorkspaceCommand } from "./modules/terminal/terminal-service";
@@ -15,43 +25,60 @@ import {
 } from "./modules/workspace/workspace-service";
 
 type TabKey = "sessions" | "terminal" | "workspace";
-const OAUTH_CONFIG_KEY = "codex.oauth.config.v1";
+type AuthMethod = "oauth" | "api_key";
 
-function loadOAuthConfig(): OAuthConfig {
-  const fromEnv: OAuthConfig = {
+interface AuthSettings {
+  method: AuthMethod;
+  oauth: OAuthConfig;
+  apiModel: string;
+  apiBaseUrl: string;
+}
+
+const AUTH_SETTINGS_KEY = "codex.auth.settings.v1";
+
+function defaultOAuthConfig(): OAuthConfig {
+  return {
     clientId: import.meta.env.VITE_OAUTH_CLIENT_ID ?? "",
     authorizeUrl: import.meta.env.VITE_OAUTH_AUTHORIZE_URL ?? "",
     tokenUrl: import.meta.env.VITE_OAUTH_TOKEN_URL ?? "",
     redirectUri: import.meta.env.VITE_OAUTH_REDIRECT_URI ?? "http://127.0.0.1:4815/callback",
     scope: import.meta.env.VITE_OAUTH_SCOPE ?? "openid profile offline_access",
   };
+}
 
-  const raw = localStorage.getItem(OAUTH_CONFIG_KEY);
+function loadAuthSettings(): AuthSettings {
+  const defaults: AuthSettings = {
+    method: "oauth",
+    oauth: defaultOAuthConfig(),
+    apiModel: "gpt-4.1-mini",
+    apiBaseUrl: "https://api.openai.com/v1",
+  };
+
+  const raw = localStorage.getItem(AUTH_SETTINGS_KEY);
   if (!raw) {
-    return fromEnv;
+    return defaults;
   }
 
   try {
-    const parsed = JSON.parse(raw) as Partial<OAuthConfig>;
+    const parsed = JSON.parse(raw) as Partial<AuthSettings> & {
+      oauth?: Partial<OAuthConfig>;
+    };
+
     return {
-      clientId: parsed.clientId ?? fromEnv.clientId,
-      authorizeUrl: parsed.authorizeUrl ?? fromEnv.authorizeUrl,
-      tokenUrl: parsed.tokenUrl ?? fromEnv.tokenUrl,
-      redirectUri: parsed.redirectUri ?? fromEnv.redirectUri,
-      scope: parsed.scope ?? fromEnv.scope,
+      method: parsed.method === "api_key" ? "api_key" : "oauth",
+      oauth: {
+        clientId: parsed.oauth?.clientId ?? defaults.oauth.clientId,
+        authorizeUrl: parsed.oauth?.authorizeUrl ?? defaults.oauth.authorizeUrl,
+        tokenUrl: parsed.oauth?.tokenUrl ?? defaults.oauth.tokenUrl,
+        redirectUri: parsed.oauth?.redirectUri ?? defaults.oauth.redirectUri,
+        scope: parsed.oauth?.scope ?? defaults.oauth.scope,
+      },
+      apiModel: parsed.apiModel ?? defaults.apiModel,
+      apiBaseUrl: parsed.apiBaseUrl ?? defaults.apiBaseUrl,
     };
   } catch {
-    return fromEnv;
+    return defaults;
   }
-}
-
-function missingOAuthConfigFields(config: OAuthConfig): string[] {
-  const missing: string[] = [];
-  if (!config.clientId.trim()) missing.push("Client ID");
-  if (!config.authorizeUrl.trim()) missing.push("Authorize URL");
-  if (!config.tokenUrl.trim()) missing.push("Token URL");
-  if (!config.redirectUri.trim()) missing.push("Redirect URI");
-  return missing;
 }
 
 function createMessage(role: ChatMessage["role"], content: string): ChatMessage {
@@ -63,15 +90,30 @@ function createMessage(role: ChatMessage["role"], content: string): ChatMessage 
   };
 }
 
-function App() {
-  const [oauthConfig, setOauthConfig] = useState<OAuthConfig>(() => loadOAuthConfig());
-  const authService = useMemo(() => new OAuthService(oauthConfig, new SecureTokenStore()), [oauthConfig]);
-  const [tab, setTab] = useState<TabKey>("sessions");
+function missingOAuthConfigFields(config: OAuthConfig): string[] {
+  const missing: string[] = [];
+  if (!config.clientId.trim()) missing.push("Client ID");
+  if (!config.authorizeUrl.trim()) missing.push("Authorize URL");
+  if (!config.tokenUrl.trim()) missing.push("Token URL");
+  if (!config.redirectUri.trim()) missing.push("Redirect URI");
+  return missing;
+}
 
+function App() {
+  const [authSettings, setAuthSettings] = useState<AuthSettings>(() => loadAuthSettings());
+  const authService = useMemo(
+    () => new OAuthService(authSettings.oauth, new SecureTokenStore()),
+    [authSettings.oauth],
+  );
+
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authDraft, setAuthDraft] = useState<AuthSettings>(authSettings);
+  const [apiKey, setApiKey] = useState("");
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+
+  const [tab, setTab] = useState<TabKey>("sessions");
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
-  const [authStatus, setAuthStatus] = useState("Ready");
-  const [authRequired, setAuthRequired] = useState(true);
-  const startupAttemptedRef = useRef(false);
+  const [authStatus, setAuthStatus] = useState("Not connected");
 
   const [workspacePath, setWorkspacePath] = useState("");
 
@@ -97,74 +139,85 @@ function App() {
   const [editableContent, setEditableContent] = useState("");
 
   const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sessions[0] ?? null;
-  const missingConfig = missingOAuthConfigFields(oauthConfig);
-
-  function onSaveOAuthConfig() {
-    localStorage.setItem(OAUTH_CONFIG_KEY, JSON.stringify(oauthConfig));
-    setAuthStatus("Config OAuth salva localmente.");
-  }
-
-  async function onStartLogin() {
-    try {
-      setAuthRequired(true);
-      setAuthStatus("Abrindo browser e aguardando callback OAuth...");
-      const next = await authService.beginLoginWithLoopback();
-      setAuthSession(next);
-      setAuthRequired(false);
-      setAuthStatus("Autenticado.");
-    } catch (error) {
-      setAuthRequired(true);
-      setAuthStatus(error instanceof Error ? error.message : "Falha ao iniciar login OAuth.");
-    }
-  }
-
-  async function onRefreshLogin() {
-    try {
-      const next = await authService.refreshSession();
-      setAuthSession(next);
-      setAuthRequired(false);
-      setAuthStatus("Sessão renovada.");
-    } catch (error) {
-      setAuthRequired(true);
-      setAuthStatus(error instanceof Error ? error.message : "Falha ao renovar sessão.");
-    }
-  }
-
-  async function onLogout() {
-    await authService.logout();
-    setAuthSession(null);
-    setAuthRequired(true);
-    setAuthStatus("Logout concluído.");
-  }
 
   useEffect(() => {
-    if (startupAttemptedRef.current) {
-      return;
-    }
-    startupAttemptedRef.current = true;
+    async function bootstrapAuth() {
+      const loadedKey = await loadApiKey();
+      setApiKey(loadedKey ?? "");
 
-    async function startupAuth() {
-      if (!authService.isConfigured()) {
-        setAuthRequired(true);
-        setAuthStatus("Configure OAuth and click Connect to continue.");
+      if (authSettings.method !== "oauth" || !authService.isConfigured()) {
+        if (authSettings.method === "api_key" && loadedKey) {
+          setAuthStatus("Connected with API key.");
+        } else if (authSettings.method === "api_key") {
+          setAuthStatus("API key not configured.");
+        } else {
+          setAuthStatus("OAuth not configured.");
+        }
         return;
       }
 
       try {
-        setAuthStatus("Restoring session...");
-        const session = await authService.refreshSession();
-        setAuthSession(session);
-        setAuthRequired(false);
-        setAuthStatus("Sessão restaurada.");
+        const restored = await authService.refreshSession();
+        setAuthSession(restored);
+        setAuthStatus("Connected with OAuth.");
       } catch {
-        setAuthRequired(true);
-        setAuthStatus("Sign-in required. Opening browser...");
-        await onStartLogin();
+        setAuthStatus("OAuth session not active. Open Add Key to connect.");
       }
     }
 
-    void startupAuth();
-  }, [authService]);
+    void bootstrapAuth();
+  }, [authService, authSettings.method]);
+
+  function openAuthModal() {
+    setAuthDraft(authSettings);
+    setApiKeyDraft(apiKey);
+    setIsAuthModalOpen(true);
+  }
+
+  function closeAuthModal() {
+    setIsAuthModalOpen(false);
+  }
+
+  async function connectOAuthNow(config: OAuthConfig) {
+    const runtime = new OAuthService(config, new SecureTokenStore());
+    setAuthStatus("Opening browser and waiting for OAuth callback...");
+    const next = await runtime.beginLoginWithLoopback();
+    setAuthSession(next);
+    setAuthStatus("Connected with OAuth.");
+  }
+
+  async function onSaveAuthSettings() {
+    localStorage.setItem(AUTH_SETTINGS_KEY, JSON.stringify(authDraft));
+    setAuthSettings(authDraft);
+
+    if (authDraft.method === "api_key") {
+      if (apiKeyDraft.trim()) {
+        await saveApiKey(apiKeyDraft.trim());
+        setApiKey(apiKeyDraft.trim());
+        setAuthSession(null);
+        setAuthStatus("Connected with API key.");
+      } else {
+        await clearApiKey();
+        setApiKey("");
+        setAuthStatus("API key cleared.");
+      }
+      setIsAuthModalOpen(false);
+      return;
+    }
+
+    const missing = missingOAuthConfigFields(authDraft.oauth);
+    if (missing.length > 0) {
+      setAuthStatus(`Missing OAuth fields: ${missing.join(", ")}`);
+      return;
+    }
+
+    try {
+      await connectOAuthNow(authDraft.oauth);
+      setIsAuthModalOpen(false);
+    } catch (error) {
+      setAuthStatus(error instanceof Error ? error.message : "Failed to connect OAuth.");
+    }
+  }
 
   function onCreateSession() {
     const next = createSession();
@@ -173,11 +226,7 @@ function App() {
   }
 
   async function onSendPrompt() {
-    if (!activeSession) {
-      return;
-    }
-
-    if (!prompt.trim()) {
+    if (!activeSession || !prompt.trim()) {
       return;
     }
 
@@ -187,24 +236,32 @@ function App() {
     const userMessage = createMessage("user", userText);
     const afterUser = appendMessage(activeSession.id, userMessage);
     setSessions(afterUser);
-    setSessionStatus("Gerando resposta do agente...");
+    setSessionStatus("Generating assistant reply...");
 
     try {
       const current = afterUser.find((item) => item.id === activeSession.id);
       const history = current?.messages ?? [];
-      const replyText = await requestAssistantReply(history, userText, authSession?.accessToken);
+
+      const replyText = await requestAssistantReply(history, userText, {
+        method: authSettings.method,
+        accessToken: authSession?.accessToken,
+        apiKey,
+        model: authSettings.apiModel,
+        apiBaseUrl: authSettings.apiBaseUrl,
+      });
+
       const assistantMessage = createMessage("assistant", replyText);
       const afterAssistant = appendMessage(activeSession.id, assistantMessage);
       setSessions(afterAssistant);
-      setSessionStatus("Resposta recebida.");
+      setSessionStatus("Reply received.");
     } catch (error) {
       const systemMessage = createMessage(
         "system",
-        error instanceof Error ? error.message : "Falha ao consultar endpoint do agente.",
+        error instanceof Error ? error.message : "Failed to process assistant reply.",
       );
       const afterError = appendMessage(activeSession.id, systemMessage);
       setSessions(afterError);
-      setSessionStatus("Erro ao gerar resposta.");
+      setSessionStatus("Assistant request failed.");
     }
   }
 
@@ -258,84 +315,118 @@ function App() {
   }
 
   const diffLines = buildLineDiff(originalContent, editableContent);
+  const missingOAuthFields = missingOAuthConfigFields(authDraft.oauth);
 
   return (
     <main className="app">
-      {authRequired && !authSession && (
+      {isAuthModalOpen && (
         <section className="auth-overlay">
           <div className="auth-modal">
-            <h2>Connect your account</h2>
-            <p>
-              Sign in is required before using the app. The browser OAuth flow will open and connect your ChatGPT
-              account.
-            </p>
-            <div className="oauth-grid modal-oauth-grid">
-              <input
-                value={oauthConfig.clientId}
-                onChange={(event) =>
-                  setOauthConfig((prev) => ({
-                    ...prev,
-                    clientId: event.currentTarget.value,
-                  }))
-                }
-                placeholder="OAuth Client ID"
-              />
-              <input
-                value={oauthConfig.redirectUri}
-                onChange={(event) =>
-                  setOauthConfig((prev) => ({
-                    ...prev,
-                    redirectUri: event.currentTarget.value,
-                  }))
-                }
-                placeholder="Redirect URI (loopback)"
-              />
-              <input
-                value={oauthConfig.authorizeUrl}
-                onChange={(event) =>
-                  setOauthConfig((prev) => ({
-                    ...prev,
-                    authorizeUrl: event.currentTarget.value,
-                  }))
-                }
-                placeholder="Authorize URL"
-              />
-              <input
-                value={oauthConfig.tokenUrl}
-                onChange={(event) =>
-                  setOauthConfig((prev) => ({
-                    ...prev,
-                    tokenUrl: event.currentTarget.value,
-                  }))
-                }
-                placeholder="Token URL"
-              />
-              <input
-                value={oauthConfig.scope}
-                onChange={(event) =>
-                  setOauthConfig((prev) => ({
-                    ...prev,
-                    scope: event.currentTarget.value,
-                  }))
-                }
-                placeholder="Scopes"
-              />
-              <button className="ghost" onClick={onSaveOAuthConfig}>
-                Save OAuth config
-              </button>
-            </div>
-            {missingConfig.length > 0 && (
-              <p className="status-line">Missing required OAuth fields: {missingConfig.join(", ")}</p>
+            <h2>Add Key</h2>
+            <p>Select authentication method and save.</p>
+
+            <label htmlFor="auth-method">Method</label>
+            <select
+              id="auth-method"
+              value={authDraft.method}
+              onChange={(event) =>
+                setAuthDraft((prev) => ({
+                  ...prev,
+                  method: event.currentTarget.value === "api_key" ? "api_key" : "oauth",
+                }))
+              }
+            >
+              <option value="oauth">OAuth</option>
+              <option value="api_key">OpenAI API Key</option>
+            </select>
+
+            {authDraft.method === "api_key" ? (
+              <div className="oauth-grid modal-oauth-grid">
+                <input
+                  value={apiKeyDraft}
+                  onChange={(event) => setApiKeyDraft(event.currentTarget.value)}
+                  placeholder="OpenAI API key"
+                />
+                <input
+                  value={authDraft.apiModel}
+                  onChange={(event) =>
+                    setAuthDraft((prev) => ({ ...prev, apiModel: event.currentTarget.value }))
+                  }
+                  placeholder="Model (e.g. gpt-4.1-mini)"
+                />
+                <input
+                  value={authDraft.apiBaseUrl}
+                  onChange={(event) =>
+                    setAuthDraft((prev) => ({ ...prev, apiBaseUrl: event.currentTarget.value }))
+                  }
+                  placeholder="API base URL"
+                />
+              </div>
+            ) : (
+              <div className="oauth-grid modal-oauth-grid">
+                <input
+                  value={authDraft.oauth.clientId}
+                  onChange={(event) =>
+                    setAuthDraft((prev) => ({
+                      ...prev,
+                      oauth: { ...prev.oauth, clientId: event.currentTarget.value },
+                    }))
+                  }
+                  placeholder="OAuth Client ID"
+                />
+                <input
+                  value={authDraft.oauth.redirectUri}
+                  onChange={(event) =>
+                    setAuthDraft((prev) => ({
+                      ...prev,
+                      oauth: { ...prev.oauth, redirectUri: event.currentTarget.value },
+                    }))
+                  }
+                  placeholder="Redirect URI (loopback)"
+                />
+                <input
+                  value={authDraft.oauth.authorizeUrl}
+                  onChange={(event) =>
+                    setAuthDraft((prev) => ({
+                      ...prev,
+                      oauth: { ...prev.oauth, authorizeUrl: event.currentTarget.value },
+                    }))
+                  }
+                  placeholder="Authorize URL"
+                />
+                <input
+                  value={authDraft.oauth.tokenUrl}
+                  onChange={(event) =>
+                    setAuthDraft((prev) => ({
+                      ...prev,
+                      oauth: { ...prev.oauth, tokenUrl: event.currentTarget.value },
+                    }))
+                  }
+                  placeholder="Token URL"
+                />
+                <input
+                  value={authDraft.oauth.scope}
+                  onChange={(event) =>
+                    setAuthDraft((prev) => ({
+                      ...prev,
+                      oauth: { ...prev.oauth, scope: event.currentTarget.value },
+                    }))
+                  }
+                  placeholder="Scopes"
+                />
+              </div>
             )}
+
+            {authDraft.method === "oauth" && missingOAuthFields.length > 0 && (
+              <p className="status-line">Missing OAuth fields: {missingOAuthFields.join(", ")}</p>
+            )}
+
             <div className="auth-actions">
-              <button onClick={onStartLogin} disabled={missingConfig.length > 0}>
-                Connect now
-              </button>
-              <button className="ghost" onClick={onRefreshLogin}>
-                Retry session restore
+              <button onClick={onSaveAuthSettings}>Save</button>
+              <button className="ghost" onClick={closeAuthModal}>
+                Close
               </button>
             </div>
-            <p className="status-line">Auth: {authStatus}</p>
           </div>
         </section>
       )}
@@ -344,76 +435,10 @@ function App() {
         <div>
           <p className="eyebrow">Codex App for Windows</p>
           <h1>Workspace Agent Console</h1>
+          <p className="status-line">Auth: {authStatus}</p>
         </div>
-
         <div className="auth-actions">
-          <button onClick={onStartLogin}>
-            Entrar OAuth
-          </button>
-          <button onClick={onRefreshLogin}>
-            Refresh
-          </button>
-          <button className="ghost" onClick={onLogout}>
-            Logout
-          </button>
-        </div>
-
-        <p className="status-line">Auth: {authStatus}</p>
-
-        <div className="oauth-grid">
-          <input
-            value={oauthConfig.clientId}
-            onChange={(event) =>
-              setOauthConfig((prev) => ({
-                ...prev,
-                clientId: event.currentTarget.value,
-              }))
-            }
-            placeholder="OAuth Client ID"
-          />
-          <input
-            value={oauthConfig.redirectUri}
-            onChange={(event) =>
-              setOauthConfig((prev) => ({
-                ...prev,
-                redirectUri: event.currentTarget.value,
-              }))
-            }
-            placeholder="Redirect URI (loopback)"
-          />
-          <input
-            value={oauthConfig.authorizeUrl}
-            onChange={(event) =>
-              setOauthConfig((prev) => ({
-                ...prev,
-                authorizeUrl: event.currentTarget.value,
-              }))
-            }
-            placeholder="Authorize URL"
-          />
-          <input
-            value={oauthConfig.tokenUrl}
-            onChange={(event) =>
-              setOauthConfig((prev) => ({
-                ...prev,
-                tokenUrl: event.currentTarget.value,
-              }))
-            }
-            placeholder="Token URL"
-          />
-          <input
-            value={oauthConfig.scope}
-            onChange={(event) =>
-              setOauthConfig((prev) => ({
-                ...prev,
-                scope: event.currentTarget.value,
-              }))
-            }
-            placeholder="Scopes"
-          />
-          <button className="ghost" onClick={onSaveOAuthConfig}>
-            Salvar config OAuth
-          </button>
+          <button onClick={openAuthModal}>Add Key</button>
         </div>
       </header>
 
@@ -525,7 +550,9 @@ function App() {
                 <button
                   key={entry.relativePath}
                   className={entry.isDir ? "dir" : "file"}
-                  onClick={() => (entry.isDir ? onLoadEntries(entry.relativePath) : onOpenFile(entry.relativePath))}
+                  onClick={() =>
+                    entry.isDir ? onLoadEntries(entry.relativePath) : onOpenFile(entry.relativePath)
+                  }
                 >
                   {entry.isDir ? "[DIR]" : "[FILE]"} {entry.relativePath}
                 </button>

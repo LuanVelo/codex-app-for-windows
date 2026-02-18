@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 const FALLBACK_KEY = "codex.auth.refresh_token";
+const API_FALLBACK_KEY = "codex.auth.api_key";
 
 export interface TokenStore {
   getRefreshToken(): Promise<string | null>;
@@ -31,5 +32,29 @@ export class SecureTokenStore implements TokenStore {
     } catch {
       localStorage.removeItem(FALLBACK_KEY);
     }
+  }
+}
+
+export async function loadApiKey(): Promise<string | null> {
+  try {
+    return await invoke<string | null>("load_api_key");
+  } catch {
+    return localStorage.getItem(API_FALLBACK_KEY);
+  }
+}
+
+export async function saveApiKey(apiKey: string): Promise<void> {
+  try {
+    await invoke("save_api_key", { apiKey });
+  } catch {
+    localStorage.setItem(API_FALLBACK_KEY, apiKey);
+  }
+}
+
+export async function clearApiKey(): Promise<void> {
+  try {
+    await invoke("clear_api_key");
+  } catch {
+    localStorage.removeItem(API_FALLBACK_KEY);
   }
 }
