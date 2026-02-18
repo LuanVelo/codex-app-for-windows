@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, MessageSquarePlus, Settings } from "lucide-react";
+import { FolderOpen, MessageSquarePlus, MoreHorizontal, Settings } from "lucide-react";
 import { OAuthService } from "./modules/auth/oauth-service";
 import {
   SecureTokenStore,
@@ -24,7 +24,6 @@ import {
   writeWorkspaceFile,
 } from "./modules/workspace/workspace-service";
 import { Button } from "./components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
@@ -311,59 +310,63 @@ function App() {
   const missingDraft = missingOAuthFields(authDraft.oauth);
 
   return (
-    <div className="h-full p-4 md:p-6">
-      <div className="mx-auto grid h-full max-w-[1500px] grid-cols-1 gap-4 md:grid-cols-[320px_1fr]">
-        <Card className="flex h-full flex-col">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-xl">Codex Windows</CardTitle>
-            <p className="text-xs text-zinc-500">{authStatus}</p>
-          </CardHeader>
-          <CardContent className="flex flex-1 flex-col gap-4">
-            <Button onClick={onCreateChat} className="w-full justify-start">
-              <MessageSquarePlus className="h-4 w-4" />
-              New Chat
-            </Button>
+    <div className="h-full p-3">
+      <div className="mx-auto grid h-full max-w-[1500px] grid-cols-[290px_1fr] gap-3">
+        <aside className="flex h-full flex-col rounded-xl bg-zinc-100 p-3">
+          <div className="mb-2 flex items-center justify-between px-2">
+            <h1 className="text-lg font-semibold">codex windows</h1>
+            <button className="rounded-md p-1 text-zinc-500 hover:bg-zinc-200">
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          </div>
 
-            <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Chats</p>
-              <div className="space-y-1">
+          <Button variant="ghost" className="justify-start px-2" onClick={onCreateChat}>
+            <MessageSquarePlus className="h-4 w-4" />
+            New chat
+          </Button>
+
+          <div className="mt-4 flex-1 space-y-4 overflow-auto">
+            <section>
+              <p className="px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Threads</p>
+              <div className="mt-1 space-y-1">
                 {sessions.map((session) => (
                   <button
                     key={session.id}
                     onClick={() => setActiveSessionId(session.id)}
-                    className={`w-full rounded-md px-3 py-2 text-left text-sm ${
+                    className={`w-full rounded-md px-2 py-2 text-left text-sm ${
                       session.id === activeSession?.id
-                        ? "bg-emerald-700 text-white"
-                        : "bg-zinc-100 text-zinc-800 hover:bg-zinc-200"
+                        ? "bg-zinc-200 text-zinc-900"
+                        : "text-zinc-700 hover:bg-zinc-200"
                     }`}
                   >
-                    {session.title}
+                    <p className="truncate">{session.title}</p>
                   </button>
                 ))}
               </div>
-            </div>
+            </section>
 
-            <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Workspaces</p>
-              <div className="flex gap-2">
+            <section>
+              <p className="px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Workspaces</p>
+              <div className="mt-2 flex gap-2">
                 <Input
                   value={workspaceInput}
                   onChange={(e) => setWorkspaceInput(e.currentTarget.value)}
-                  placeholder="C:/repos/project"
+                  placeholder="C:/repo"
+                  className="h-8 bg-white"
                 />
-                <Button variant="outline" onClick={onAddWorkspace}>
+                <Button size="sm" variant="outline" onClick={onAddWorkspace}>
                   Add
                 </Button>
               </div>
-              <div className="space-y-1">
+              <div className="mt-2 space-y-1">
                 {workspaces.map((workspace) => (
                   <button
                     key={workspace}
                     onClick={() => setActiveWorkspace(workspace)}
-                    className={`w-full rounded-md px-3 py-2 text-left text-sm ${
+                    className={`w-full rounded-md px-2 py-2 text-left text-sm ${
                       workspace === activeWorkspace
                         ? "bg-zinc-900 text-white"
-                        : "bg-zinc-100 text-zinc-800 hover:bg-zinc-200"
+                        : "text-zinc-700 hover:bg-zinc-200"
                     }`}
                   >
                     <span className="flex items-center gap-2">
@@ -373,222 +376,234 @@ function App() {
                   </button>
                 ))}
               </div>
-            </div>
+            </section>
+          </div>
 
-            <div className="mt-auto">
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button variant="secondary" className="w-full justify-start" onClick={() => {
-                    setAuthDraft(authSettings);
-                    setApiKeyDraft(apiKey);
-                  }}>
-                    <Settings className="h-4 w-4" />
-                    Settings
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <h2 className="text-lg font-semibold">Authentication settings</h2>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Method</label>
-                    <select
-                      className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
-                      value={authDraft.method}
-                      onChange={(e) =>
-                        setAuthDraft((prev) => ({ ...prev, method: e.currentTarget.value as AuthMethod }))
-                      }
-                    >
-                      <option value="oauth">OAuth</option>
-                      <option value="api_key">OpenAI API Key</option>
-                    </select>
-                  </div>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button
+                variant="ghost"
+                className="mt-2 justify-start px-2 text-zinc-700"
+                onClick={() => {
+                  setAuthDraft(authSettings);
+                  setApiKeyDraft(apiKey);
+                }}
+              >
+                <Settings className="h-4 w-4" />
+                Settings
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <h2 className="text-lg font-semibold">Authentication settings</h2>
+              <p className="text-xs text-zinc-500">{authStatus}</p>
 
-                  {authDraft.method === "api_key" ? (
-                    <div className="space-y-2">
-                      <Input
-                        placeholder="OpenAI API key"
-                        value={apiKeyDraft}
-                        onChange={(e) => setApiKeyDraft(e.currentTarget.value)}
-                      />
-                      <Input
-                        placeholder="Model"
-                        value={authDraft.apiModel}
-                        onChange={(e) =>
-                          setAuthDraft((prev) => ({ ...prev, apiModel: e.currentTarget.value }))
-                        }
-                      />
-                      <Input
-                        placeholder="API base URL"
-                        value={authDraft.apiBaseUrl}
-                        onChange={(e) =>
-                          setAuthDraft((prev) => ({ ...prev, apiBaseUrl: e.currentTarget.value }))
-                        }
-                      />
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <Input
-                        placeholder="OAuth Client ID"
-                        value={authDraft.oauth.clientId}
-                        onChange={(e) =>
-                          setAuthDraft((prev) => ({
-                            ...prev,
-                            oauth: { ...prev.oauth, clientId: e.currentTarget.value },
-                          }))
-                        }
-                      />
-                      <Input
-                        placeholder="Authorize URL"
-                        value={authDraft.oauth.authorizeUrl}
-                        onChange={(e) =>
-                          setAuthDraft((prev) => ({
-                            ...prev,
-                            oauth: { ...prev.oauth, authorizeUrl: e.currentTarget.value },
-                          }))
-                        }
-                      />
-                      <Input
-                        placeholder="Token URL"
-                        value={authDraft.oauth.tokenUrl}
-                        onChange={(e) =>
-                          setAuthDraft((prev) => ({
-                            ...prev,
-                            oauth: { ...prev.oauth, tokenUrl: e.currentTarget.value },
-                          }))
-                        }
-                      />
-                      <Input
-                        placeholder="Redirect URI"
-                        value={authDraft.oauth.redirectUri}
-                        onChange={(e) =>
-                          setAuthDraft((prev) => ({
-                            ...prev,
-                            oauth: { ...prev.oauth, redirectUri: e.currentTarget.value },
-                          }))
-                        }
-                      />
-                      <Input
-                        placeholder="Scopes"
-                        value={authDraft.oauth.scope}
-                        onChange={(e) =>
-                          setAuthDraft((prev) => ({
-                            ...prev,
-                            oauth: { ...prev.oauth, scope: e.currentTarget.value },
-                          }))
-                        }
-                      />
-                      {missingDraft.length > 0 && (
-                        <p className="text-xs text-red-600">Missing: {missingDraft.join(", ")}</p>
-                      )}
-                    </div>
+              <label className="text-sm font-medium">Method</label>
+              <select
+                className="h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm"
+                value={authDraft.method}
+                onChange={(e) =>
+                  setAuthDraft((prev) => ({ ...prev, method: e.currentTarget.value as AuthMethod }))
+                }
+              >
+                <option value="oauth">OAuth</option>
+                <option value="api_key">OpenAI API Key</option>
+              </select>
+
+              {authDraft.method === "api_key" ? (
+                <div className="space-y-2">
+                  <Input
+                    placeholder="OpenAI API key"
+                    value={apiKeyDraft}
+                    onChange={(e) => setApiKeyDraft(e.currentTarget.value)}
+                  />
+                  <Input
+                    placeholder="Model"
+                    value={authDraft.apiModel}
+                    onChange={(e) =>
+                      setAuthDraft((prev) => ({ ...prev, apiModel: e.currentTarget.value }))
+                    }
+                  />
+                  <Input
+                    placeholder="API base URL"
+                    value={authDraft.apiBaseUrl}
+                    onChange={(e) =>
+                      setAuthDraft((prev) => ({ ...prev, apiBaseUrl: e.currentTarget.value }))
+                    }
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Input
+                    placeholder="OAuth Client ID"
+                    value={authDraft.oauth.clientId}
+                    onChange={(e) =>
+                      setAuthDraft((prev) => ({
+                        ...prev,
+                        oauth: { ...prev.oauth, clientId: e.currentTarget.value },
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Authorize URL"
+                    value={authDraft.oauth.authorizeUrl}
+                    onChange={(e) =>
+                      setAuthDraft((prev) => ({
+                        ...prev,
+                        oauth: { ...prev.oauth, authorizeUrl: e.currentTarget.value },
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Token URL"
+                    value={authDraft.oauth.tokenUrl}
+                    onChange={(e) =>
+                      setAuthDraft((prev) => ({
+                        ...prev,
+                        oauth: { ...prev.oauth, tokenUrl: e.currentTarget.value },
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Redirect URI"
+                    value={authDraft.oauth.redirectUri}
+                    onChange={(e) =>
+                      setAuthDraft((prev) => ({
+                        ...prev,
+                        oauth: { ...prev.oauth, redirectUri: e.currentTarget.value },
+                      }))
+                    }
+                  />
+                  <Input
+                    placeholder="Scopes"
+                    value={authDraft.oauth.scope}
+                    onChange={(e) =>
+                      setAuthDraft((prev) => ({
+                        ...prev,
+                        oauth: { ...prev.oauth, scope: e.currentTarget.value },
+                      }))
+                    }
+                  />
+                  {missingDraft.length > 0 && (
+                    <p className="text-xs text-red-600">Missing: {missingDraft.join(", ")}</p>
                   )}
+                </div>
+              )}
 
-                  <div className="flex justify-end gap-2 pt-2">
-                    <DialogClose asChild>
-                      <Button variant="ghost">Close</Button>
-                    </DialogClose>
-                    <DialogClose asChild>
-                      <Button onClick={onSaveSettings}>Save</Button>
-                    </DialogClose>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
-          </CardContent>
-        </Card>
+              <div className="flex justify-end gap-2">
+                <DialogClose asChild>
+                  <Button variant="ghost">Close</Button>
+                </DialogClose>
+                <DialogClose asChild>
+                  <Button onClick={onSaveSettings}>Save</Button>
+                </DialogClose>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </aside>
 
-        <div className="grid h-full grid-rows-[1fr_300px] gap-4">
-          <Card className="overflow-hidden">
-            <CardHeader className="pb-2">
-              <CardTitle>{activeSession?.title ?? "Chat"}</CardTitle>
-              <p className="text-xs text-zinc-500">{sessionStatus}</p>
-            </CardHeader>
-            <CardContent className="flex h-[calc(100%-4rem)] flex-col gap-3">
-              <div className="flex-1 space-y-2 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3">
+        <section className="flex h-full flex-col rounded-xl bg-white">
+          <header className="border-b border-zinc-200 px-6 py-4">
+            <p className="text-xl font-semibold">{activeSession?.title ?? "New chat"}</p>
+            <p className="text-sm text-zinc-500">{sessionStatus}</p>
+          </header>
+
+          <div className="grid flex-1 grid-rows-[1fr_320px]">
+            <div className="overflow-auto px-6 py-4">
+              <div className="mx-auto max-w-4xl space-y-3">
                 {(activeSession?.messages ?? []).map((message) => (
-                  <article key={message.id} className="rounded-md border border-zinc-200 bg-white p-2">
-                    <p className="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">{message.role}</p>
-                    <pre className="whitespace-pre-wrap text-sm">{message.content}</pre>
+                  <article key={message.id} className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                    <p className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">{message.role}</p>
+                    <pre className="whitespace-pre-wrap text-sm leading-6">{message.content}</pre>
                   </article>
                 ))}
               </div>
-              <div className="grid grid-cols-[1fr_auto] gap-2">
-                <Input
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.currentTarget.value)}
-                  placeholder="Describe what you want to do"
-                />
-                <Button onClick={onSendPrompt}>Send</Button>
-              </div>
-            </CardContent>
-          </Card>
+            </div>
 
-          <Card className="overflow-hidden">
-            <CardHeader className="pb-2">
-              <CardTitle>Activity</CardTitle>
-              <p className="text-xs text-zinc-500">Commands, files and diffs</p>
-            </CardHeader>
-            <CardContent className="grid h-[calc(100%-4rem)] grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <div className="grid grid-cols-[1fr_auto] gap-2">
-                  <Input
-                    value={command}
-                    onChange={(e) => setCommand(e.currentTarget.value)}
-                    placeholder="npm run build"
+            <div className="border-t border-zinc-200 px-6 py-3">
+              <div className="grid h-full grid-cols-2 gap-3">
+                <div className="flex flex-col gap-2">
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <Input
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.currentTarget.value)}
+                      placeholder="Ask something..."
+                    />
+                    <Button onClick={onSendPrompt}>Send</Button>
+                  </div>
+
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <Input
+                      value={command}
+                      onChange={(e) => setCommand(e.currentTarget.value)}
+                      placeholder="npm run build"
+                    />
+                    <Button variant="outline" onClick={onRunCommand} disabled={!activeWorkspace}>
+                      Run
+                    </Button>
+                  </div>
+                  <p className="text-xs text-zinc-500">{terminalStatus}</p>
+
+                  <div className="h-full overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2">
+                    {commandHistory.map((item, idx) => (
+                      <pre key={`${idx}-${item.command}`} className="mb-2 whitespace-pre-wrap text-xs">
+                        $ {item.command}\n{item.stdout || item.stderr || "(no output)"}
+                      </pre>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <div className="h-20 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs">
+                    {entries.map((entry) => (
+                      <button
+                        key={entry.relativePath}
+                        className="block w-full rounded px-1 py-0.5 text-left hover:bg-zinc-200"
+                        onClick={() =>
+                          entry.isDir
+                            ? listWorkspaceEntries(activeWorkspace, entry.relativePath).then(setEntries)
+                            : onOpenFile(entry.relativePath)
+                        }
+                      >
+                        {entry.isDir ? "[DIR]" : "[FILE]"} {entry.relativePath}
+                      </button>
+                    ))}
+                  </div>
+
+                  <Textarea
+                    value={editableContent}
+                    onChange={(e) => setEditableContent(e.currentTarget.value)}
+                    placeholder="Select a file to edit"
+                    className="h-24"
                   />
-                  <Button onClick={onRunCommand} disabled={!activeWorkspace}>Run</Button>
-                </div>
-                <p className="text-xs text-zinc-500">{terminalStatus}</p>
-                <div className="h-44 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2">
-                  {commandHistory.map((item, idx) => (
-                    <pre key={`${idx}-${item.command}`} className="mb-2 whitespace-pre-wrap text-xs">
-                      $ {item.command}\n{item.stdout || item.stderr || "(no output)"}
-                    </pre>
-                  ))}
-                </div>
-              </div>
 
-              <div className="space-y-2">
-                <div className="h-24 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs">
-                  {entries.map((entry) => (
-                    <button
-                      key={entry.relativePath}
-                      className="block w-full rounded px-1 py-0.5 text-left hover:bg-zinc-200"
-                      onClick={() =>
-                        entry.isDir
-                          ? listWorkspaceEntries(activeWorkspace, entry.relativePath).then(setEntries)
-                          : onOpenFile(entry.relativePath)
-                      }
-                    >
-                      {entry.isDir ? "[DIR]" : "[FILE]"} {entry.relativePath}
-                    </button>
-                  ))}
-                </div>
-                <Textarea
-                  value={editableContent}
-                  onChange={(e) => setEditableContent(e.currentTarget.value)}
-                  placeholder="Select a file to edit"
-                  className="h-24"
-                />
-                <div className="flex justify-end">
-                  <Button variant="outline" onClick={onSaveFile} disabled={!selectedFile}>
-                    Save file
-                  </Button>
-                </div>
-                <div className="h-24 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs">
-                  {diffLines.slice(0, 80).map((line, idx) => (
-                    <pre
-                      key={`${line.type}-${idx}`}
-                      className={`${line.type === "added" ? "text-emerald-700" : line.type === "removed" ? "text-red-700" : "text-zinc-700"}`}
-                    >
-                      {line.type === "same" ? "  " : line.type === "added" ? "+ " : "- "}
-                      {line.content}
-                    </pre>
-                  ))}
+                  <div className="flex justify-end">
+                    <Button variant="outline" onClick={onSaveFile} disabled={!selectedFile}>
+                      Save file
+                    </Button>
+                  </div>
+
+                  <div className="h-full overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs">
+                    {diffLines.slice(0, 80).map((line, idx) => (
+                      <pre
+                        key={`${line.type}-${idx}`}
+                        className={`${
+                          line.type === "added"
+                            ? "text-emerald-700"
+                            : line.type === "removed"
+                              ? "text-red-700"
+                              : "text-zinc-700"
+                        }`}
+                      >
+                        {line.type === "same" ? "  " : line.type === "added" ? "+ " : "- "}
+                        {line.content}
+                      </pre>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );
